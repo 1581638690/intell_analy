@@ -8,7 +8,7 @@ import configparser
 
 # 读取配置文件
 path_config = configparser.ConfigParser()
-path_config.read('./config.ini')
+path_config.read('/opt/openfbi/pylibs/config.ini')
 # path_config.read('config_window.ini')
 # 获取字符信息# 获取 start_chars 和 end_chars
 start_chars_str = path_config.get('Characters', 'start_chars')
