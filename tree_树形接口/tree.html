@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Mapping</title>
+</head>
+<body>
+    <h2>URL Mapping Configuration</h2>
+    <form id="mappingForm">
+        <label for="url">Enter URL:</label>
+        <input type="text" id="url" name="url"><br><br>
+
+        <label for="id_field">ID Field:</label>
+        <input type="text" id="id_field" name="id_field"><br><br>
+
+        <h3>Field Mappings:</h3>
+        <div id="fields">
+            <div>
+                <label for="key_1">Key:</label>
+                <input type="text" id="key_1" name="key_1">
+                <label for="value_1">Field:</label>
+                <input type="text" id="value_1" name="value_1">
+            </div>
+        </div>
+        <button type="button" onclick="addField()">Add Field</button><br><br>
+
+        <button type="button" onclick="submitForm()">Submit</button>
+    </form>
+
+    <script>
+        let fieldCount = 1;
+
+        function addField() {
+            fieldCount++;
+            const fieldsDiv = document.getElementById("fields");
+            const newFieldDiv = document.createElement("div");
+
+            newFieldDiv.innerHTML = `
+                <label for="key_${fieldCount}">Key:</label>
+                <input type="text" id="key_${fieldCount}" name="key_${fieldCount}">
+                <label for="value_${fieldCount}">Field:</label>
+                <input type="text" id="value_${fieldCount}" name="value_${fieldCount}">
+            `;
+            fieldsDiv.appendChild(newFieldDiv);
+        }
+
+        async function submitForm() {
+            const url = document.getElementById("url").value;
+            const idField = document.getElementById("id_field").value;
+
+            // Gather field mappings
+            const fields = {};
+            for (let i = 1; i <= fieldCount; i++) {
+                const key = document.getElementById(`key_${i}`).value;
+                const value = document.getElementById(`value_${i}`).value;
+                if (key && value) {
+                    fields[key] = value;
+                }
+            }
+
+            const urlMapping = {
+                url: url,
+                id_field: idField,
+                fields: fields
+            };
+
+            // Simulate response body data (in practice, you may get this from elsewhere)
+            const responseBody = '{"data":[{"id":1,"system":"system1","tableName":"table1","tableComment":"comment1","topic":"topic1"}]}';
+
+            // Send to server
+            const response = await fetch("/process_data", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    url_mapping: urlMapping,
+                    response_body: responseBody
+                })
+            });
+
+            const result = await response.json();
+            console.log(result);
+        }
+    </script>
+</body>
+</html>
