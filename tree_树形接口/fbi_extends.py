@@ -8,12 +8,11 @@ import configparser
 path_config = configparser.ConfigParser()
 # path_config.read('config_window.ini')
 path_config.read('./config.ini')
-# 获取路径
-xlink_base_path = path_config['paths']['xlink_base_path']
+
 
 sys.path.append("lib")
 
-from bottle import request, Bottle, abort, route, response
+from bottle import request, Bottle, abort, route, response,run
 import json
 import time
 import zipfile
@@ -106,8 +105,8 @@ def intell_analysis():
         q_d = request.json  # 获取到前端发来的消息 其中包括上下文规则信息，标识的数据信息
         datas = q_d["datas"]  # 获取标识信息
         con = q_d["con"]  # 获取上下文规则信息
-        map_dic = q_d["map_tree"] #获取字典映射规则信息
-
+        map_dic = q_d.get("map_dic",{}) #获取字典映射规则信息
+        map_field = {}
 
         # 获取相应规则，目前按照1条规则进行测试
         try:
@@ -122,7 +121,13 @@ def intell_analysis():
         except Exception as e:
             # idx_message={}
             return {"status": "Error", "msg": f"数据识别失败:{e.__str__()}"}
+        # 根据获取出的字典映射识别信息
+        try:
+            if map_dic:
+                map_field = map_tree(map_dic, datas)
 
+        except Exception as e:
+            return {"status": "Error", "msg": f"字典映射识别失败:{e.__str__()}"}
         if idx_message:
             # 根据规则名称 获取规则名
 
@@ -137,6 +142,8 @@ def intell_analysis():
                 output_res.setdefault("rules", intell_rule[model_key])
             else:
                 output_res.setdefault("rules", {})
+            if map_field:
+                output_res.setdefault("map_dic",map_field)
         return {"status": "Success", "res": output_res}
     except Exception as e:
         return {"status": "Error", "res": str(e)}
@@ -172,10 +179,13 @@ def rules_save():
         con = add_data.get("con", {})
         linfo = add_data.get("linfo", {})
         model_key = add_data.get("model_key", "")
+        map_dic = alter_data.get("map_dic", {})
+        MapField = alter_data.get("MapField", {})
+        dict_assoc = alter_data.get("dict_assoc","")
         con = con.get(model_key, {})
         # 先将两者写入 到副本文件中，如果存在报错信息，则删除副本文件，返回错误信息
         try:
-            tol_rulers = add_all_data(rules, con, model_key, linfo, tol_rulers)
+            tol_rulers = add_all_data(rules, con, model_key, linfo, map_dic,MapField,dict_assoc,tol_rulers)
             add_msg = f"新增模型成功！"
         except Exception as e:
             return {"status": "Error", "msg": f"子模型新增错误:{e.__str__()}"}
@@ -185,9 +195,12 @@ def rules_save():
         linfo = alter_data.get("linfo", {})
         model_key = alter_data.get("model_key", "")
         old_key = alter_data.get("orl_key", "")
+        map_dic = alter_data.get("map_dic",{})
+        MapField = alter_data.get("MapField", {})
+        dict_assoc = alter_data.get("dict_assoc", "")
         con = con.get(model_key, {})
         try:
-            tol_rulers = alter_all_data(rules, con, model_key, linfo, old_key, tol_rulers)
+            tol_rulers = alter_all_data(rules, con, model_key, linfo, old_key, map_dic,MapField,dict_assoc,tol_rulers)
             alter_msg = f"修改模型成功！"
         except Exception as e:
             return {"status": "Error", "msg": f"子模型修改错误:{e.__str__()}"}
@@ -354,3 +367,6 @@ def models_download():
 
     except Exception as e:
         return {"status": "Error", "msg": f"错误：{e.__str__()}"}
+
+if __name__ == '__main__':
+    run(host='localhost',port=8080,debug=True)

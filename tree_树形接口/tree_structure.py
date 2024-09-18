@@ -109,7 +109,7 @@ def common_handler(url, response_body, common_dic):
     return common_dic
 
 
-def map_tree(map_dic):
+def map_tree(map_dic,datas):
     map_filed = {}
     # 获取当前日志信息
     data_id = map_dic.get("data_id")
@@ -124,12 +124,12 @@ def map_tree(map_dic):
     imp_type = map_dic.get("imp_type")
 
     id_path = filed_path(map_dic, "id_field", imp_type,http_data)
-    print(id_path)
     fullname_path = filed_path(map_dic, "fullname", imp_type,http_data)
     parentuuid_path = filed_path(map_dic, "parentuuid", imp_type,http_data)
-    map_filed["id_field"] = id_path
-    map_filed["fullname"] = fullname_path
-    map_filed["parentuuid"] = parentuuid_path
+    map_filed.setdefault(imp_pos,{}).setdefault("id_field",id_path)
+    map_filed.setdefault(imp_pos, {}).setdefault("fullname", fullname_path)
+    map_filed.setdefault(imp_pos, {}).setdefault("parentuuid", parentuuid_path)
+
 
     return map_filed
 
@@ -144,7 +144,15 @@ def filed_path(map_dic, filed, imp_type,http_data):
         path = id_path.get(id_field)
 
     return list(set(path))
+def load_model_data_window(file_str):
+    # 需要放入xlink中进行判断，拼接字符串
+    base_dir = "./models_paths/"
 
+    source_file = os.path.join(base_dir, f"{file_str}_rcl.pkl")
+    if os.path.exists(source_file):
+        with open(source_file, "rb") as fp:
+            return pickle.load(fp)
+    return {}
 
 if __name__ == '__main__':
     data = {
@@ -325,14 +333,27 @@ if __name__ == '__main__':
             "fullname": "crorgFullName",
             "parentuuid": "crorgParentUuid",
             "data_id": 0,
-        }
+        },
+        "MapField":{
+            "预警主体类型":{
+                "":"全部",
+                "0":"企业",
+                "1":"事件",
+                "2":"人员"
+            },
+            "反馈状态":{"":"全部","0":"未反馈","1":"已反馈"},
 
+        },
+        "start_dict_assoc":"组织名称"
     }
     con = data1.get("con")
     datas = data1.get("datas")
     tree =data1.get("map_tree")
     intell_rule = handle_project(con, datas)
-    print(intell_rule)
 
-    map_filed =  map_tree(tree)
+
+    map_filed =  map_tree(tree,datas)
     print(map_filed)
+
+    da = load_model_data_window("operevent")
+    print(da)

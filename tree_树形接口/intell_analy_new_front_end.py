@@ -1,4 +1,5 @@
 import os
+import copy
 import time
 import ujson
 import pickle
@@ -572,7 +573,7 @@ def save_all_data(rules, con, model_key, linfo, file_str):
         return res
 
 
-def add_all_data(rules, con, model_key, linfo, existing_data):
+def add_all_data(rules, con, model_key, linfo, map_field, MapField, dict_assoc, existing_data):
     """
     保存规则、条件、标签信息到同一个文件中
     :param rules: 规则数据
@@ -592,21 +593,27 @@ def add_all_data(rules, con, model_key, linfo, existing_data):
         existing_data[model_key] = {
             "rules": rules,
             "condition": con,
-            "label_info": linfo
+            "label_info": linfo,
+            "map_dic": map_field,
+            "MapField": MapField,
+            "dict_assoc": dict_assoc
         }
     else:
         # 数据为空 直接添加
         existing_data[model_key] = {
             "rules": rules,
             "condition": con,
-            "label_info": linfo
+            "label_info": linfo,
+            "map_dic": map_field,
+            "MapField": MapField,
+            "dict_assoc": dict_assoc
         }
 
     return existing_data
 
 
 #                                                   ######修改规则信息######
-def alter_all_data(rules, con, model_key, linfo, old_key, existing_data):
+def alter_all_data(rules, con, model_key, linfo, old_key, map_field, MapField, dict_assoc, existing_data):
     """
     :param rules: 规则信息
     :param con: con信息
@@ -620,7 +627,10 @@ def alter_all_data(rules, con, model_key, linfo, old_key, existing_data):
     datas = {
         "rules": rules,
         "condition": con,
-        "label_info": linfo
+        "label_info": linfo,
+        "map_dic": map_field,
+        "MapField": MapField,
+        "dict_assoc": dict_assoc
     }
     # 尝试读取已有的数据
     if existing_data:
@@ -912,10 +922,11 @@ def found_path(path_name):
 
 
 #                                           ######读取模型文件并识别结果######
-def read_model_identify(models_data, o):
+def read_model_identify(models_data, o, dict_tree=None):
     data_storage = {}
     label_info = {}
     label_dic = {}
+    # dict_tree = {}
     if models_data:
         for model_key, data in models_data.items():  # model_key :测试7 ,{}
             # 第一条信息
@@ -924,7 +935,9 @@ def read_model_identify(models_data, o):
             conditions = data.get("condition", {})
             rulers = data.get("rules", {})
             l_info = data.get("label_info", {})
-
+            map_dic = data.get("map_dic", {})
+            MapField = data.get("MapField", {})
+            dict_assoc = data.get("dict_assoc", "")
             # 身处 同一 子模型名称下面，需要判断上下文规则是否满足，如果满足则进行规则识别
             try:
                 found = con_judge(conditions, o)
@@ -932,16 +945,19 @@ def read_model_identify(models_data, o):
                 return f"上下文规则数据出错：{e.__str__()}"
 
             if found:
+                # 对字典映射数据进行处理
+                try:
+                    if map_dic:
+                        dict_tree = map_field_identify(map_dic, o, dict_tree)
+                        print(dict_tree)
+                except Exception as e:
+                    return f"模型映射数据出错：{e.__str__()}"
                 # 如果上下文规则成立，那就对规则进行读取
                 try:
-                    data_storage = rule_judge(rulers, o, data_storage)
+
+                    data_storage, l_info = rule_judge(rulers, o, data_storage, l_info, dict_tree, MapField, dict_assoc)
                 except Exception as e:
                     return f"模型识别数据出错：{e.__str__()}"
-                # 返回识别数据与标签信息
-                # if data_storage:
-                #     return {"status": "Success", "msg": "模型识别成功！", "data": data_storage, "label_info": l_info}
-                # else:
-                #     return {"label_info": l_info}
                 for label, value in l_info.items():
                     if value != "" and value not in label_info.setdefault(label, []):
                         label_info[label].append(value)
@@ -951,7 +967,7 @@ def read_model_identify(models_data, o):
             if len(val_lst) >= 1:
                 label_dic[label] = val_lst[0]
         if data_storage or label_dic:
-            return {"data": data_storage, "label_info": label_dic}
+            return {"data": data_storage, "label_info": label_dic, "map_tree": dict_tree}
         else:
             return {}
     return {}
@@ -969,7 +985,7 @@ def con_judge(condition, o):
     return found
 
 
-def rule_judge(rulers, o, data_storage):
+def rule_judge(rulers, o, data_storage, l_info, dict_tree=None, MapField=None, assoc_str=""):
     """
     对规则进行识别
     """
@@ -977,23 +993,28 @@ def rule_judge(rulers, o, data_storage):
     for ch_name, ch_data in rulers.items():
         for uid, imp_data in ch_data.items():
             if "JSON" in uid:
-                data_storage = model_data_extract(ch_name, o, data_storage, imp_data)
+                data_storage, l_info = model_data_extract(ch_name, o, data_storage, imp_data, l_info, dict_tree,
+                                                          MapField, assoc_str)  # 组织名 o,
             else:
                 for http_pos, rle in imp_data.items():
                     current_data = o.get(http_pos, "")
                     if header_judge(current_data):
 
-                        data_storage = headers_models(current_data, rle, http_pos, ch_name, data_storage)
+                        data_storage, l_info = headers_models(current_data, rle, http_pos, ch_name, data_storage,
+                                                              l_info, dict_tree, MapField, assoc_str)
 
                     elif isinstance(current_data, list):
-                        data_storage = headers_models(current_data, rle, http_pos, ch_name, data_storage)
+                        data_storage, l_info = headers_models(current_data, rle, http_pos, ch_name, data_storage,
+                                                              l_info, dict_tree, MapField, assoc_str)
                     else:
-                        data_storage = body_models(current_data, rle, http_pos, ch_name, data_storage)
+                        data_storage, l_info = body_models(current_data, rle, http_pos, ch_name, data_storage, l_info,
+                                                           dict_tree, MapField, assoc_str)
 
-    return data_storage
+    return data_storage, l_info
 
 
-def headers_models(current_data, pos_rules, http_pos, ch_name, data_storage):
+def headers_models(current_data, pos_rules, http_pos, ch_name, data_storage, l_info, dict_tree=None, MapField=None,
+                   assoc_str=""):
     try:
         current_data = ujson.loads(current_data)
     except:
@@ -1028,20 +1049,24 @@ def headers_models(current_data, pos_rules, http_pos, ch_name, data_storage):
                             type_name = ch_name_lst[0]
                         else:
                             type_name = ""
-
+                        if res == "":
+                            res = field_ch(MapField, ch_name, res)
                         if res != "" and res not in data_storage.setdefault(http_pos, {}).setdefault(type_name,
                                                                                                      {}).setdefault(
                             ch_name, []):
                             for end in end_chars:
                                 if end in res:
                                     res = res[:res.index(end)]
+                            res = field_ch(MapField, ch_name, res)  # 中文字段映射
+                            res, l_info = dic_ass(ch_name, dict_tree, assoc_str, res, l_info)  # 字典映射
                             data_storage[http_pos][type_name][ch_name].append(res)
                 else:
                     continue
-    return data_storage
+    return data_storage, l_info
 
 
-def body_models(data_source, pos_rules, http_pos, ch_name, data_storage):
+def body_models(data_source, pos_rules, http_pos, ch_name, data_storage, l_info, dict_tree=None, MapField=None,
+                assoc_str=""):
     """
     处理体部
     :param ch_name:
@@ -1072,14 +1097,18 @@ def body_models(data_source, pos_rules, http_pos, ch_name, data_storage):
             type_name = ch_name_lst[0]
         else:
             type_name = ""
+        if res == "":
+            res = field_ch(MapField, ch_name, res)
         if res != "" and res not in data_storage.setdefault(http_pos, {}).setdefault(type_name, {}).setdefault(ch_name,
                                                                                                                []):
             for end in end_chars:
                 if end in res:
                     res = res[:res.index(end)]
+            res = field_ch(MapField, ch_name, res)  # 中文字段映射
+            res, l_info = dic_ass(ch_name, dict_tree, assoc_str, res, l_info)  # 字典映射信息
             data_storage[http_pos][type_name][ch_name].append(res)
 
-    return data_storage
+    return data_storage, l_info
 
 
 #                   ##########删除子模型数据##########
@@ -1268,7 +1297,7 @@ def cification(key, data_soure, imps, rules):
         target = preprocess_target(imp_data)
         # 进行递归查找，这个是做了全局的查找了
 
-        paths_dict = find_values_in_dict_little(data_soure, target, imp_pos, imp_type)
+        paths_dict = find_values_in_dict_little(data_soure, target, imp_type)
 
         for target, paths in paths_dict.items():
 
@@ -1281,7 +1310,7 @@ def cification(key, data_soure, imps, rules):
     return rules
 
 
-def find_values_in_dict_little(data, target, imp_pos, imp_type, path='', found_paths=None):
+def find_values_in_dict_little(data, target, imp_type, path='', found_paths=None):
     if found_paths is None:
         found_paths = {str(target): []}
 
@@ -1300,12 +1329,12 @@ def find_values_in_dict_little(data, target, imp_pos, imp_type, path='', found_p
                     json_value = ujson.loads(value)
                     if json_value == target:
                         found_paths[str(target)].append(current_path + "-JSON")
-                    find_values_in_dict_little(json_value, target, imp_pos, imp_type, current_path + "-JSON",
+                    find_values_in_dict_little(json_value, target, imp_type, current_path + "-JSON",
                                                found_paths)
                 except ValueError:
                     pass
             elif isinstance(value, (dict, list)):
-                find_values_in_dict_little(value, target, imp_pos, imp_type, current_path, found_paths)
+                find_values_in_dict_little(value, target, imp_type, current_path, found_paths)
     elif isinstance(data, list):
         if data == target:
             found_paths[str(target)].append(path)
@@ -1315,7 +1344,7 @@ def find_values_in_dict_little(data, target, imp_pos, imp_type, path='', found_p
             else:
                 # current_path = f"{path}-[{index}]"
                 current_path = f"{path}-[0]"
-            find_values_in_dict_little(item, target, imp_pos, imp_type, current_path, found_paths)
+            find_values_in_dict_little(item, target, imp_type, current_path, found_paths)
 
     return found_paths
 
@@ -1651,7 +1680,7 @@ def get_value_by_path(data_source, path, value_lst):
     return value_lst
 
 
-def model_data_extract(ch_name, o, data_storage, imp_data):
+def model_data_extract(ch_name, o, data_storage, imp_data, l_info, dict_tree=None, MapField=None, assoc_str=""):
     """
     用于xlink中处理
     :param ch_name:
@@ -1674,11 +1703,13 @@ def model_data_extract(ch_name, o, data_storage, imp_data):
                     type_name = ch_name_lst[0]
                 else:
                     type_name = ""
+                value_lst = field_ch(MapField, ch_name, value_lst)
+                value_lst, l_info = dic_ass(ch_name, dict_tree, assoc_str, value_lst, l_info)
                 if value_lst:
                     data_storage.setdefault(http_pos, {}).setdefault(type_name, {}).setdefault(ch_name, []).extend(
                         value_lst)
 
-    return data_storage
+    return data_storage, l_info
 
 
 # add rzc on 2024/7/17 针对子模型标签信息进行判断
@@ -1812,6 +1843,7 @@ def intell_sen1(model_file_data, monitor):
             cls_lst = list(set(cls_lst))
     return total_info, total_count, max_level, info, cls_lst, count
 
+
 # 针对相同接口，根据接口参数的不同来变换接口事件的名称
 def QueryApiName(url_name, label_info, parameter, parameter_json=None):
     """
@@ -1845,51 +1877,312 @@ def QueryMultApiName(url_name, label_info, parameter, parameter_json=None):
             continue
         par_name = label_info.get(key, "")
         keyword, cls = par_name.split(">>")
-        #target = parameter_json or parameter
+        # target = parameter_json or parameter
         target = parameter_json or {}
         if (keyword in target or keyword in target.values()) or keyword in parameter:
             url_name = cls
     return url_name
 
 
-def map_tree(map_dic):
+def map_tree(map_dic, datas):
     """
     :param map_dic: 字典映射数据
     :return:
     """
     map_filed = {}
-    # 获取当前日志信息
-    data_id = map_dic.get("data_id")
-    # 循环获取日志序号的日志信息
-    current_data = next((d.get("data") for d in datas if d.get("idx") == data_id), None)
-    # 获取标注日志的请求位置
-    imp_pos = map_dic.get("imp_pos")
-
-    http_data = current_data.get(imp_pos)
-    http_data = ujson.loads(http_data)
-
-    imp_type = map_dic.get("imp_type")
-
-    id_path = filed_path(map_dic, "id_field", imp_type, http_data)
-    print(id_path)
-    fullname_path = filed_path(map_dic, "fullname", imp_type, http_data)
-    parentuuid_path = filed_path(map_dic, "parentuuid", imp_type, http_data)
-    map_filed["id_field"] = id_path
-    map_filed["fullname"] = fullname_path
-    map_filed["parentuuid"] = parentuuid_path
+    id_path, id_pos = filed_path(map_dic, "id_field", datas)
+    print(id_path, id_pos)
+    fullname_path, name_pos = filed_path(map_dic, "fullname", datas)
+    parentuuid_path, par_pos = filed_path(map_dic, "parentuuid", datas)
+    map_filed.setdefault(id_pos, {}).setdefault("id_field", id_path)
+    map_filed.setdefault(name_pos, {}).setdefault("fullname", fullname_path)
+    map_filed.setdefault(par_pos, {}).setdefault("parentuuid", parentuuid_path)
 
     return map_filed
 
 
-def filed_path(map_dic, filed, imp_type, http_data):
+def filed_path(map_dic, filed, datas):
     # new_path = {}
     path = []
-    id_field = map_dic.get(filed)
-    id_path = find_values_in_dict_little(http_data, id_field, imp_type)
-    if id_path:
-        path = id_path.get(id_field)
+    id_field = map_dic.get(filed, {})
 
-    return list(set(path))
+    imp_type = id_field.get("imp_type")
+    # 获取当前日志信息
+    data_id = int(id_field.get("data_id"))
+    # 循环获取日志序号的日志信息
+    current_data = next((d.get("data") for d in datas if d.get("idx") == data_id), None)
+
+    id_pos = id_field.get("imp_pos")
+    imp_data = id_field.get("imp_data")
+    http_data = current_data.get(id_pos)
+    http_data = ujson.loads(http_data)
+    id_path = find_values_in_dict_little(http_data, imp_data, imp_type)
+
+    if id_path:
+        path = id_path.get(imp_data)
+
+    return list(set(path)), id_pos
+
+
+def map_field_identify(map_field, o, dict_tree):
+    # dict_tree = {}
+
+    for http_pos, res_lst in map_field.items():
+        current_data = o.get(http_pos, "")
+        if current_data:
+            id_lst = []
+            fullname_lst = []
+            parentuuid_lst = []
+            id_rule = res_lst.get("id_field", [])
+            fullname_rule = res_lst.get("fullname", [])
+            parentuuid_rule = res_lst.get("parentuuid", [])
+
+            for t_rule in id_rule:
+                id_lst = get_tree_value(current_data, t_rule, id_lst)
+
+            for t_rule in fullname_rule:
+                fullname_lst = get_tree_value(current_data, t_rule, fullname_lst)
+
+            for t_rule in parentuuid_rule:
+                parentuuid_lst = get_tree_value(current_data, t_rule, parentuuid_lst)
+            # 获取最小长度
+            min_length = min(len(id_lst), len(fullname_lst), len(parentuuid_lst))
+            for id, fullname, parentuuid in zip(id_lst[:min_length], fullname_lst[:min_length],
+                                                parentuuid_lst[:min_length]):
+                dict_tree.setdefault(id, {}).setdefault("fullname", fullname)
+                dict_tree.setdefault(id, {}).setdefault("parentuuid", parentuuid)
+    return dict_tree
+
+
+def get_tree_value(data_source, path, value_lst):
+    """
+    根据给定路径获取数据源中的值并添加到value_lst中
+    :param data_source: 数据源，可以是JSON字符串、字典或列表
+    :param path: 访问路径，使用"."分隔
+    :param value_lst: 存储结果值的列表
+    :return: value_lst
+    """
+    try:
+        current = ujson.loads(data_source) if isinstance(data_source, str) else data_source
+    except Exception as e:
+        print(f"Error loading JSON: {e}")
+        return value_lst
+
+    path_list = path.split(".")
+
+    idx_in_lst = 0  # 当前路径在列表中的索引，用于最后的值判断
+
+    def traverse_path(temp_current, path_list, value_lst, idx_in_lst):
+        found = True
+        for index, p in enumerate(path_list):
+            if p.endswith("-JSON"):
+                key = p.split("-")[0]
+                temp_current = temp_current.get(key)
+                idx_in_lst = index
+                if not temp_current:
+                    found = False
+                    break
+                try:
+                    temp_current = ujson.loads(temp_current)
+                except Exception as e:
+                    print(f"Error loading JSON from key '{key}': {e}")
+                    found = False
+                    break
+
+            elif "-LIST" in p:
+                key, _ = p.split("-LIST")
+                key = key.strip()
+                temp_current = temp_current.get(key, [])
+                idx_in_lst = index
+                if not temp_current:
+                    found = False
+                    break
+                if p != path_list[-1]:  # 如果路径还未结束，则需要继续处理列表中的元素
+                    for item in temp_current:
+                        value_lst = traverse_path(item, path_list[index + 1:], value_lst, idx_in_lst)
+                    break
+            elif "-[" in p and p.endswith("]"):
+                key, index = p.split("-[")
+                key = key.strip()
+                try:
+                    index = int(index[:-1])
+                except ValueError:
+                    print(f"Invalid index in path: {p}")
+                    found = False
+                    break
+                temp_current = temp_current.get(key, [])
+                if not temp_current or index >= len(temp_current):
+                    found = False
+                    break
+                temp_current = temp_current[index]
+
+            else:
+                temp_current = temp_current.get(p)
+                idx_in_lst = index
+            if not temp_current:
+                found = False
+                break
+
+        if found and ((not isinstance(temp_current, list)) or (
+                isinstance(temp_current, list) and idx_in_lst == len(path_list) - 1)):
+            value_lst.append(temp_current)
+        return value_lst
+
+    # 如果数据源是列表，遍历每个元素
+    if isinstance(current, list):
+        # 如果刚开始就是list 那么第一个path  不是 -LIST 就是 -[0]
+
+        if path_list[0] == "-LIST":
+            # 如果是第一个
+            for item in current:
+                value_lst = traverse_path(item, path_list[1:], value_lst, idx_in_lst)
+        else:
+            item = current[0]
+            value_lst = traverse_path(item, path_list[1:], value_lst, idx_in_lst)
+    else:
+        value_lst = traverse_path(current, path_list, value_lst, idx_in_lst)
+
+    return value_lst
+
+
+def dic_ass(ch_name, dict_tree, assoc_str, value, l_info):
+    """
+    :param ch_name: 中文名
+    :param dict_tree: 字典数据
+    :param assoc_str: 需关联字段信息
+    :return:
+    """
+    name = l_info.get("name", "")
+    if assoc_str == ch_name:
+        if isinstance(value, list):
+            v_lst = []
+            for org_uuid in value:
+                if org_uuid in dict_tree:
+                    path = []
+                    ID_name = dict_tree[org_uuid].get("fullname", "")
+                    v_lst.append(ID_name)
+                    current_uuid = org_uuid
+                    while current_uuid:
+                        org_info = dict_tree.get(current_uuid)
+                        if not org_info:
+                            break
+                        path.append(org_info["fullname"])
+                        current_uuid = org_info["parentuuid"]
+                    name += "-" + "-> ".join(reversed(path))
+                    l_info["name"] = name
+                else:
+                    v_lst.append(org_uuid)
+            return v_lst, l_info
+        elif isinstance(value, str):
+            if value in dict_tree:
+                path = []
+                ID_name = dict_tree[value].get("fullname", "")
+                current_uuid = value
+                while current_uuid:
+                    org_info = dict_tree.get(current_uuid)
+                    if not org_info:
+                        break
+                    path.append(org_info["fullname"])
+                    current_uuid = org_info["parentuuid"]
+                name += "-" + "-> ".join(reversed(path))
+                l_info["name"] = name
+                return ID_name, l_info
+            else:
+                return value, l_info
+    else:
+        return value, l_info
+
+
+def field_ch(MapField, ch_name, res):
+    """
+    :param MapField: 映射字段
+    :param ch_name: 中文名
+    :param res: 返回结果
+    :return:
+    """
+    if ch_name in MapField:
+        if isinstance(res, list):
+            res_lst = []
+            for v in res:
+                ch_map = MapField[ch_name]
+                if str(v) in ch_map:
+                    res_lst.append(ch_map[str(v)])
+            return res_lst
+        elif isinstance(res, str):
+
+            ch_map = MapField[ch_name]
+            if str(res) in ch_map:
+                res = ch_map[str(res)]
+            return res
+    else:
+        return res
+
+
+########################### 账户识别 ###########################
+# 账户首先是需要进行获取 通过识别标注账户信息，提取token，来进行对照其他接口中的token进行关联账户信息
+
+# 账户名 尽量中文标签尽量是账户名
+
+def session_retrieval(user_dic, account_model, acc_o):
+    """
+    :param user_dic: 由Token作为键，账户信息作为值的字典
+    :param result: 识别的标注数据
+    :return:
+    """
+    sessid = ""
+    account = ""
+    result = read_model_identify(account_model, acc_o)
+    label_info = result.get("label_info", {})
+    if label_info.get("接口详情") == "登录":
+        data = result.get("data", {})
+        user_infos = {}
+        token_container = []
+
+        if not data:
+            return user_dic, account
+
+        for http_pos, action_value in data.items():
+            for action, value_lst in action_value.items():
+                for name, value in value_lst.items():
+                    if name != "会话ID":
+                        if len(value) >= 1:
+                            user_infos[name] = value[0]
+                    else:
+                        token_container = value
+        user_infos["date"] = datetime.datetime.now()
+        if token_container:
+            for jsessionid in token_container:
+                user_dic.setdefault(jsessionid, user_infos)
+                account = user_infos.get("账户名")
+    else:
+        # 获取到的是请求体中的 session_ID
+
+        data = result.get("data", {})
+        if data:
+            for pos, pos_data in data.items():
+                for action, action_data in pos_data.items():
+                    for ch_name, value_list in action_data.items():
+                        if ch_name == "会话ID" and value_list:
+                            sessid = value_list[0]
+    if sessid and sessid in user_dic:
+        user_info = user_dic.get(sessid, {})
+        account = user_info.get("账户名", "")
+    return user_dic, account
+
+
+# 定时删除文件中所包含超过时间段的会话信息
+def sched_dele(user_dic):
+    user_info = copy.deepcopy(user_dic)
+    remove_key = []
+    new_date = datetime.datetime.now()
+    for key, value in user_info.items():
+        if (new_date - value.get("date")).total_seconds() // 3600 >= 25:
+            remove_key.append(key)
+        # del user_info[key]
+    for key in remove_key:
+        del user_info[key]
+        del user_dic[key]
+    # dump_pkl("/data/xlink/user_info.pkl", user_info)
 
 
 if __name__ == '__main__':
@@ -1922,7 +2215,207 @@ if __name__ == '__main__':
     # label_name = "敏感监测"
     # model_file_data = label_judge(model_data, label_key, label_name)
     # print(model_file_data)
-    label_name_list = ["敏感监测","业务访问"]
-    log_type_list = ["HTTP","DBMS"]
-    model_file_datas = MoreSourceModel(model_data, label_name_list, log_type_list)
-    print(model_file_datas)
+    label_name_list = ["敏感监测", "业务访问"]
+    log_type_list = ["HTTP", "DBMS"]
+    # model_file_datas = MoreSourceModel(model_data, label_name_list, log_type_list)
+    # print(model_file_datas)
+    file_str = "operevent"
+    base_dir = "./models_paths/"
+    source_file = os.path.join(base_dir, f"{file_str}_rcl.pkl")
+    if os.path.exists(source_file):
+        with open(source_file, "rb") as fp:
+            an = pickle.load(fp)
+    print(an)
+    olist = [{
+        "time": "2024-08-29T10:37:37",
+        "app": "59.202.68.95:8215",
+        "app_name": "高质量数据中心",
+        "flow_id": "78906584529497",
+        "urld": "http://59.202.68.95:8215/dataasset/api/dataasset/other/queryOrgTree",
+        "url": "http://59.202.68.95:8215/dataasset/api/dataasset/other/queryOrgTree",
+        "name": "数据目录-目录管理-组织结构",
+        "account": "徐君",
+        "auth_type": 5,
+        "dstport": 8215,
+        "srcip": "10.18.80.10",
+        "parameter": "uuid=ORG_21C028E1CF26409E80A270821D44AC4C",
+        "real_ip": "",
+        "http_method": "POST",
+        "status": 200,
+        "api_type": "5",
+        "qlength": 0,
+        "yw_count": 0,
+        "length": "14604",
+        "user_info": "{\"账户名\": \"徐君\", \"职位名称\": \"瑞成科技\", \"工作电话\": \"0571-0000000\"}",
+        "srcport": 53759,
+        "dstip": "59.202.68.95",
+        "risk_level": "1",
+        "content_length": 14604,
+        "id": "1724899257612872868",
+        "age": 27062,
+        "content_type": "JSON",
+        "key": "\"\"",
+        "info": "{}",
+        "request_headers": "[{\"name\":\"Host\",\"value\":\"59.202.68.95:8215\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Content-Length\",\"value\":\"0\"},{\"name\":\"Accept\",\"value\":\"application\\/json, text\\/plain, *\\/*\"},{\"name\":\"Pragma\",\"value\":\"no-cache\"},{\"name\":\"Cache-Control\",\"value\":\"no-cache, no-store\"},{\"name\":\"X-Requested-With\",\"value\":\"XMLHttpRequest\"},{\"name\":\"access_token\",\"value\":\"f05856f2c95746e77cd220b231bffe12\"},{\"name\":\"User-Agent\",\"value\":\"Mozilla\\/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit\\/537.36 (KHTML, like Gecko) Chrome\\/120.0.0.0 Safari\\/537.36\"},{\"name\":\"Origin\",\"value\":\"http:\\/\\/59.202.68.95:8215\"},{\"name\":\"Referer\",\"value\":\"http:\\/\\/59.202.68.95:8215\\/dataSheet?activeId=302C64A00D6B458799DEEE96BDB442B1\"},{\"name\":\"Accept-Encoding\",\"value\":\"gzip, deflate\"},{\"name\":\"Accept-Language\",\"value\":\"zh-CN,zh;q=0.9\"},{\"name\":\"Cookie\",\"value\":\"JSESSIONID=46C46EF23678E74686464D2D3C3AC48C; wyhtml=\\/dataasset\\/_1918c9ecaa25735_1724641102498\"}]",
+        "response_headers": "[{\"name\":\"Server\",\"value\":\"nginx\\/1.24.0\"},{\"name\":\"Date\",\"value\":\"Thu, 29 Aug 2024 02:37:37 GMT\"},{\"name\":\"Content-Type\",\"value\":\"text\\/json;charset=UTF-8\"},{\"name\":\"Content-Length\",\"value\":\"14604\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Cache-Control\",\"value\":\"no-cache\"},{\"name\":\"Expires\",\"value\":\"0\"},{\"name\":\"Pragma\",\"value\":\"No-cache\"},{\"name\":\"Content-Language\",\"value\":\"zh-CN\"},{\"name\":\"Access-Control-Allow-Origin\",\"value\":\"*\"},{\"name\":\"Access-Control-Allow-Headers\",\"value\":\"X-Requested-With\"},{\"name\":\"Access-Control-Allow-Methods\",\"value\":\"GET,POST,OPTIONS\"}]",
+        "request_body": "",
+        "response_body": "{\"success\":true,\"fieldErrors\":{},\"actionErrors\":[],\"messages\":[\"操作成功\"],\"totalCount\":17,\"data\":[{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委领导\",\"crorgLevelCode\":\"060000\",\"crorgName\":\"拱墅区委领导\",\"crorgOrder\":597,\"crorgOuterUuid\":\"GO_17da9e84bad74f5abc4b7a0e327dfd73\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576455,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_F1B0DA8C766E48FB989B00AAA216DBC9\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":true,\"levelCode\":\"060000\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":597,\"parent\":false,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委领导\",\"type\":\"2\",\"unid\":5576455,\"uuid\":\"ORG_F1B0DA8C766E48FB989B00AAA216DBC9\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委办公室\",\"crorgLevelCode\":\"060001\",\"crorgName\":\"拱墅区委办公室\",\"crorgOrder\":991,\"crorgOuterUuid\":\"GO_caba3451996746278cb486da6d35153a\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576456,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_6F8BDFED24AE4DD6AFE00FC67D0E0BDF\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060001\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":991,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委办公室\",\"type\":\"2\",\"unid\":5576456,\"uuid\":\"ORG_6F8BDFED24AE4DD6AFE00FC67D0E0BDF\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区纪委区监委\",\"crorgLevelCode\":\"060002\",\"crorgName\":\"拱墅区纪委区监委\",\"crorgOrder\":1360,\"crorgOuterUuid\":\"GO_c4f4a71a902f4c9aa9f268be9197c219\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576457,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_359556E3BD8149C6AFD40E6650C668C7\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060002\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":1360,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区纪委区监委\",\"type\":\"2\",\"unid\":5576457,\"uuid\":\"ORG_359556E3BD8149C6AFD40E6650C668C7\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委组织部\",\"crorgLevelCode\":\"060003\",\"crorgName\":\"拱墅区委组织部\",\"crorgOrder\":1710,\"crorgOuterUuid\":\"GO_2d0a4ad40a3b40d9be5938865101d694\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576458,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_6757E6884D044C029A790095ED8D4AE4\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060003\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":1710,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委组织部\",\"type\":\"2\",\"unid\":5576458,\"uuid\":\"ORG_6757E6884D044C029A790095ED8D4AE4\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委宣传部\",\"crorgLevelCode\":\"060004\",\"crorgName\":\"拱墅区委宣传部\",\"crorgOrder\":2029,\"crorgOuterUuid\":\"GO_fe954d4f65db477498e50f6915140d32\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576459,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_E3F4DD397B2840088A71F1ED0DAEDE42\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060004\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":2029,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委宣传部\",\"type\":\"2\",\"unid\":5576459,\"uuid\":\"ORG_E3F4DD397B2840088A71F1ED0DAEDE42\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委统战部\",\"crorgLevelCode\":\"060005\",\"crorgName\":\"拱墅区委统战部\",\"crorgOrder\":2314,\"crorgOuterUuid\":\"GO_d2e5fd0d432d4182972d9bdc37421867\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576460,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_906A2B2D6F504A33BFB9CB67F8A078EE\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060005\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":2314,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委统战部\",\"type\":\"2\",\"unid\":5576460,\"uuid\":\"ORG_906A2B2D6F504A33BFB9CB67F8A078EE\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委政法委\",\"crorgLevelCode\":\"060006\",\"crorgName\":\"拱墅区委政法委\",\"crorgOrder\":2553,\"crorgOuterUuid\":\"GO_c5b087c3d895486d80e0982347c83fde\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576461,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_567B44AC197B4558A33FE470CA97A0A1\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060006\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":2553,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委政法委\",\"type\":\"2\",\"unid\":5576461,\"uuid\":\"ORG_567B44AC197B4558A33FE470CA97A0A1\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委改革办\",\"crorgLevelCode\":\"060007\",\"crorgName\":\"拱墅区委改革办\",\"crorgOrder\":2759,\"crorgOuterUuid\":\"GO_fc60d6e048204209ab092e401edcffaa\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576462,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_2FF96EDD1094407F965D518DB05528B5\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060007\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":2759,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委改革办\",\"type\":\"2\",\"unid\":5576462,\"uuid\":\"ORG_2FF96EDD1094407F965D518DB05528B5\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委政研室\",\"crorgLevelCode\":\"060008\",\"crorgName\":\"拱墅区委政研室\",\"crorgOrder\":2928,\"crorgOuterUuid\":\"GO_0d38034d9a3a4aaeb923f05b244cc6f5\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576463,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_42CCD11143684939AEA326121BE26850\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":true,\"levelCode\":\"060008\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":2928,\"parent\":false,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委政研室\",\"type\":\"2\",\"unid\":5576463,\"uuid\":\"ORG_42CCD11143684939AEA326121BE26850\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委编办\",\"crorgLevelCode\":\"060009\",\"crorgName\":\"拱墅区委编办\",\"crorgOrder\":3064,\"crorgOuterUuid\":\"GO_0f28be9f989443068bb06158e02e291e\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576464,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_F5CEC5DEC4374823BC35E03C58FB5E2B\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060009\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3064,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委编办\",\"type\":\"2\",\"unid\":5576464,\"uuid\":\"ORG_F5CEC5DEC4374823BC35E03C58FB5E2B\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委直属机关工委\",\"crorgLevelCode\":\"06000A\",\"crorgName\":\"拱墅区委直属机关工委\",\"crorgOrder\":3177,\"crorgOuterUuid\":\"GO_36d848d6dcda4af399a358555b398664\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576465,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_E8A7DEBE3DDF4410B34DED9F3CAB6B0E\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000A\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3177,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委直属机关工委\",\"type\":\"2\",\"unid\":5576465,\"uuid\":\"ORG_E8A7DEBE3DDF4410B34DED9F3CAB6B0E\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委巡察机构\",\"crorgLevelCode\":\"06000B\",\"crorgName\":\"拱墅区委巡察机构\",\"crorgOrder\":3270,\"crorgOuterUuid\":\"GO_e67d034429aa43378e5e63c6683eea11\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576466,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_878E9A6C79544938A6D649579E55F38B\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000B\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3270,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委巡察机构\",\"type\":\"2\",\"unid\":5576466,\"uuid\":\"ORG_878E9A6C79544938A6D649579E55F38B\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区信访局\",\"crorgLevelCode\":\"06000C\",\"crorgName\":\"拱墅区信访局\",\"crorgOrder\":3348,\"crorgOuterUuid\":\"GO_cb8637b3616640ac91464931bd3bbb91\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576467,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_E03D96311D7548468DA29F1C7441E040\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000C\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3348,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区信访局\",\"type\":\"2\",\"unid\":5576467,\"uuid\":\"ORG_E03D96311D7548468DA29F1C7441E040\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委老干部局\",\"crorgLevelCode\":\"06000D\",\"crorgName\":\"拱墅区委老干部局\",\"crorgOrder\":3421,\"crorgOuterUuid\":\"GO_55e6368393a14eae90b03b8da363982e\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576468,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_8C72187200B94178B0409D6B4FD70699\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000D\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3421,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委老干部局\",\"type\":\"2\",\"unid\":5576468,\"uuid\":\"ORG_8C72187200B94178B0409D6B4FD70699\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委党史研究室\",\"crorgLevelCode\":\"06000E\",\"crorgName\":\"拱墅区委党史研究室\",\"crorgOrder\":3484,\"crorgOuterUuid\":\"GO_afae709447654bfb97bffcfd66fc8f69\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576469,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_279EF9C45AD34C21B8F797A70A30C870\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000E\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3484,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委党史研究室\",\"type\":\"2\",\"unid\":5576469,\"uuid\":\"ORG_279EF9C45AD34C21B8F797A70A30C870\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区关工委\",\"crorgLevelCode\":\"06000F\",\"crorgName\":\"拱墅区关工委\",\"crorgOrder\":3541,\"crorgOuterUuid\":\"GO_b758a3f121ed4c48b09297e4477b471a\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576470,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_4606D946D5314C10BB053D9B2FBEC8C6\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000F\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3541,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区关工委\",\"type\":\"2\",\"unid\":5576470,\"uuid\":\"ORG_4606D946D5314C10BB053D9B2FBEC8C6\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区社会治理中心\",\"crorgLevelCode\":\"06000G\",\"crorgName\":\"拱墅区社会治理中心\",\"crorgOrder\":3588,\"crorgOuterUuid\":\"GO_3c9b0329f140443fbd042f75d7603cde\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576471,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_0DEDE216398C41E49206EB1B2A630F2E\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000G\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3588,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区社会治理中心\",\"type\":\"2\",\"unid\":5576471,\"uuid\":\"ORG_0DEDE216398C41E49206EB1B2A630F2E\"}]}",
+        "request_body_json": "{}",
+        "parameter_json": "{}"
+    },
+        {
+            "time": "2024-08-29T11:30:47",
+            "app": "59.202.68.95:8215",
+            "app_name": "高质量数据中心",
+            "flow_id": "1628337715433374",
+            "urld": "http://59.202.68.95:8215/dataasset/api/dataasset/dataDictionary/likeTree",
+            "url": "http://59.202.68.95:8215/dataasset/api/dataasset/dataDictionary/likeTree",
+            "name": "标签/目录组",
+            "account": "徐君",
+            "auth_type": 5,
+            "dstport": 8215,
+            "srcip": "10.18.80.10",
+            "parameter": "uuid=393D43AE73EB483DAC22040B128C936C",
+            "real_ip": "",
+            "http_method": "POST",
+            "status": 200,
+            "api_type": "5",
+            "qlength": 0,
+            "yw_count": 0,
+            "length": "1959",
+            "user_info": "{\"账户名\": \"徐君\", \"职位名称\": \"瑞成科技\", \"工作电话\": \"0571-0000000\"}",
+            "srcport": 58597,
+            "dstip": "59.202.68.95",
+            "risk_level": "0",
+            "content_length": 1959,
+            "id": "1724902448006303782",
+            "age": 63093,
+            "content_type": "JSON",
+            "key": "\"\"",
+            "info": "{}",
+            "request_headers": "[{\"name\":\"Host\",\"value\":\"59.202.68.95:8215\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Content-Length\",\"value\":\"0\"},{\"name\":\"Accept\",\"value\":\"application\\/json, text\\/plain, *\\/*\"},{\"name\":\"Pragma\",\"value\":\"no-cache\"},{\"name\":\"Cache-Control\",\"value\":\"no-cache, no-store\"},{\"name\":\"X-Requested-With\",\"value\":\"XMLHttpRequest\"},{\"name\":\"access_token\",\"value\":\"f05856f2c95746e77cd220b231bffe12\"},{\"name\":\"User-Agent\",\"value\":\"Mozilla\\/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit\\/537.36 (KHTML, like Gecko) Chrome\\/120.0.0.0 Safari\\/537.36\"},{\"name\":\"Origin\",\"value\":\"http:\\/\\/59.202.68.95:8215\"},{\"name\":\"Referer\",\"value\":\"http:\\/\\/59.202.68.95:8215\\/dataDict?activeId=FE70463C68E146CAAC591A15250D4721\"},{\"name\":\"Accept-Encoding\",\"value\":\"gzip, deflate\"},{\"name\":\"Accept-Language\",\"value\":\"zh-CN,zh;q=0.9\"},{\"name\":\"Cookie\",\"value\":\"JSESSIONID=46C46EF23678E74686464D2D3C3AC48C; wyhtml=\\/dataasset\\/_1918c9ecaa25735_1724641102498\"}]",
+            "response_headers": "[{\"name\":\"Server\",\"value\":\"nginx\\/1.24.0\"},{\"name\":\"Date\",\"value\":\"Thu, 29 Aug 2024 03:30:47 GMT\"},{\"name\":\"Content-Type\",\"value\":\"text\\/json;charset=UTF-8\"},{\"name\":\"Content-Length\",\"value\":\"1959\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Cache-Control\",\"value\":\"no-cache\"},{\"name\":\"Expires\",\"value\":\"0\"},{\"name\":\"Pragma\",\"value\":\"No-cache\"},{\"name\":\"Content-Language\",\"value\":\"zh-CN\"},{\"name\":\"Access-Control-Allow-Origin\",\"value\":\"*\"},{\"name\":\"Access-Control-Allow-Headers\",\"value\":\"X-Requested-With\"},{\"name\":\"Access-Control-Allow-Methods\",\"value\":\"GET,POST,OPTIONS\"}]",
+            "request_body": "",
+            "response_body": "{\"success\":true,\"fieldErrors\":{},\"actionErrors\":[],\"messages\":[],\"totalCount\":2,\"data\":[{\"binType\":0,\"cmmNodeType\":\"1\",\"code\":\"database\",\"crdctCode\":\"database\",\"crdctCractUuid\":\"CRACT_UUID_1\",\"crdctCreateTime\":\"2022-11-10 17:26:57\",\"crdctLevelCode\":\"000H010000\",\"crdctName\":\"数据库\",\"crdctOrder\":1,\"crdctParentUuid\":\"393D43AE73EB483DAC22040B128C936C\",\"crdctPathCode\":\"/DICT/BIGDATA/RDMP/dataformat/database\",\"crdctRemarks\":\"\",\"crdctStatus\":\"1\",\"crdctType\":\"1\",\"crdctUnid\":2064302,\"crdctUpdateTime\":\"2022-11-10 17:26:57\",\"crdctUuid\":\"3B04511313724BB289E4F6B663B8FA58\",\"crdctValue\":\"\",\"depth\":5,\"ext\":{},\"fullType\":\"11\",\"iconSkin\":\"xtree-depth-5 xtree-type-1 \",\"intMap\":{},\"lastUpdateTime\":\"2022-11-10 17:26:57\",\"leaf\":false,\"levelCode\":\"000H010000\",\"majorType\":\"1\",\"minorType\":\"1\",\"order\":1,\"parent\":true,\"parentUuid\":\"393D43AE73EB483DAC22040B128C936C\",\"pathCode\":\"/DICT/BIGDATA/RDMP/dataformat/database\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"数据库\",\"unid\":2064302,\"uuid\":\"3B04511313724BB289E4F6B663B8FA58\"},{\"binType\":0,\"cmmNodeType\":\"1\",\"code\":\"picture\",\"crdctCode\":\"picture\",\"crdctCractUuid\":\"CRACT_UUID_1\",\"crdctCreateTime\":\"2022-11-10 17:27:07\",\"crdctLevelCode\":\"000H010001\",\"crdctName\":\"图形图像\",\"crdctOrder\":3,\"crdctParentUuid\":\"393D43AE73EB483DAC22040B128C936C\",\"crdctPathCode\":\"/DICT/BIGDATA/RDMP/dataformat/picture\",\"crdctRemarks\":\"\",\"crdctStatus\":\"1\",\"crdctType\":\"1\",\"crdctUnid\":2064303,\"crdctUpdateTime\":\"2022-11-10 17:27:07\",\"crdctUuid\":\"053E7EE50F6144728AF0BC5B6B7B4341\",\"crdctValue\":\"\",\"depth\":5,\"ext\":{},\"fullType\":\"11\",\"iconSkin\":\"xtree-depth-5 xtree-type-1 \",\"intMap\":{},\"lastUpdateTime\":\"2022-11-10 17:27:07\",\"leaf\":false,\"levelCode\":\"000H010001\",\"majorType\":\"1\",\"minorType\":\"1\",\"order\":3,\"parent\":true,\"parentUuid\":\"393D43AE73EB483DAC22040B128C936C\",\"pathCode\":\"/DICT/BIGDATA/RDMP/dataformat/picture\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"图形图像\",\"unid\":2064303,\"uuid\":\"053E7EE50F6144728AF0BC5B6B7B4341\"}]}",
+            "request_body_json": "{}",
+            "parameter_json": "{}"
+        }
+    ]
+    dict_o = {
+        "time": "2024-08-29T11:30:47",
+        "app": "59.202.68.95:8215",
+        "app_name": "高质量数据中心",
+        "flow_id": "1628337715433374",
+        "urld": "http://59.202.68.95:8215/dataasset/api/dataasset/dataDictionary/likeTree",
+        "url": "http://59.202.68.95:8215/dataasset/api/dataasset/dataDictionary/likeTree",
+        "name": "标签/目录组",
+        "account": "徐君",
+        "auth_type": 5,
+        "dstport": 8215,
+        "srcip": "10.18.80.10",
+        "parameter": "uuid=393D43AE73EB483DAC22040B128C936C",
+        "real_ip": "",
+        "http_method": "POST",
+        "status": 200,
+        "api_type": "5",
+        "qlength": 0,
+        "yw_count": 0,
+        "length": "1959",
+        "user_info": "{\"账户名\": \"徐君\", \"职位名称\": \"瑞成科技\", \"工作电话\": \"0571-0000000\"}",
+        "srcport": 58597,
+        "dstip": "59.202.68.95",
+        "risk_level": "0",
+        "content_length": 1959,
+        "id": "1724902448006303782",
+        "age": 63093,
+        "content_type": "JSON",
+        "key": "\"\"",
+        "info": "{}",
+        "request_headers": "[{\"name\":\"Host\",\"value\":\"59.202.68.95:8215\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Content-Length\",\"value\":\"0\"},{\"name\":\"Accept\",\"value\":\"application\\/json, text\\/plain, *\\/*\"},{\"name\":\"Pragma\",\"value\":\"no-cache\"},{\"name\":\"Cache-Control\",\"value\":\"no-cache, no-store\"},{\"name\":\"X-Requested-With\",\"value\":\"XMLHttpRequest\"},{\"name\":\"access_token\",\"value\":\"f05856f2c95746e77cd220b231bffe12\"},{\"name\":\"User-Agent\",\"value\":\"Mozilla\\/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit\\/537.36 (KHTML, like Gecko) Chrome\\/120.0.0.0 Safari\\/537.36\"},{\"name\":\"Origin\",\"value\":\"http:\\/\\/59.202.68.95:8215\"},{\"name\":\"Referer\",\"value\":\"http:\\/\\/59.202.68.95:8215\\/dataDict?activeId=FE70463C68E146CAAC591A15250D4721\"},{\"name\":\"Accept-Encoding\",\"value\":\"gzip, deflate\"},{\"name\":\"Accept-Language\",\"value\":\"zh-CN,zh;q=0.9\"},{\"name\":\"Cookie\",\"value\":\"JSESSIONID=46C46EF23678E74686464D2D3C3AC48C; wyhtml=\\/dataasset\\/_1918c9ecaa25735_1724641102498\"}]",
+        "response_headers": "[{\"name\":\"Server\",\"value\":\"nginx\\/1.24.0\"},{\"name\":\"Date\",\"value\":\"Thu, 29 Aug 2024 03:30:47 GMT\"},{\"name\":\"Content-Type\",\"value\":\"text\\/json;charset=UTF-8\"},{\"name\":\"Content-Length\",\"value\":\"1959\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Cache-Control\",\"value\":\"no-cache\"},{\"name\":\"Expires\",\"value\":\"0\"},{\"name\":\"Pragma\",\"value\":\"No-cache\"},{\"name\":\"Content-Language\",\"value\":\"zh-CN\"},{\"name\":\"Access-Control-Allow-Origin\",\"value\":\"*\"},{\"name\":\"Access-Control-Allow-Headers\",\"value\":\"X-Requested-With\"},{\"name\":\"Access-Control-Allow-Methods\",\"value\":\"GET,POST,OPTIONS\"}]",
+        "request_body": "",
+        "response_body": "{\"success\":true,\"fieldErrors\":{},\"actionErrors\":[],\"messages\":[],\"totalCount\":2,\"data\":[{\"binType\":0,\"cmmNodeType\":\"1\",\"code\":\"database\",\"crdctCode\":\"database\",\"crdctCractUuid\":\"CRACT_UUID_1\",\"crdctCreateTime\":\"2022-11-10 17:26:57\",\"crdctLevelCode\":\"000H010000\",\"crdctName\":\"数据库\",\"crdctOrder\":1,\"crdctParentUuid\":\"393D43AE73EB483DAC22040B128C936C\",\"crdctPathCode\":\"/DICT/BIGDATA/RDMP/dataformat/database\",\"crdctRemarks\":\"\",\"crdctStatus\":\"1\",\"crdctType\":\"1\",\"crdctUnid\":2064302,\"crdctUpdateTime\":\"2022-11-10 17:26:57\",\"crdctUuid\":\"3B04511313724BB289E4F6B663B8FA58\",\"crdctValue\":\"\",\"depth\":5,\"ext\":{},\"fullType\":\"11\",\"iconSkin\":\"xtree-depth-5 xtree-type-1 \",\"intMap\":{},\"lastUpdateTime\":\"2022-11-10 17:26:57\",\"leaf\":false,\"levelCode\":\"000H010000\",\"majorType\":\"1\",\"minorType\":\"1\",\"order\":1,\"parent\":true,\"parentUuid\":\"393D43AE73EB483DAC22040B128C936C\",\"pathCode\":\"/DICT/BIGDATA/RDMP/dataformat/database\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"数据库\",\"unid\":2064302,\"uuid\":\"3B04511313724BB289E4F6B663B8FA58\"},{\"binType\":0,\"cmmNodeType\":\"1\",\"code\":\"picture\",\"crdctCode\":\"picture\",\"crdctCractUuid\":\"CRACT_UUID_1\",\"crdctCreateTime\":\"2022-11-10 17:27:07\",\"crdctLevelCode\":\"000H010001\",\"crdctName\":\"图形图像\",\"crdctOrder\":3,\"crdctParentUuid\":\"393D43AE73EB483DAC22040B128C936C\",\"crdctPathCode\":\"/DICT/BIGDATA/RDMP/dataformat/picture\",\"crdctRemarks\":\"\",\"crdctStatus\":\"1\",\"crdctType\":\"1\",\"crdctUnid\":2064303,\"crdctUpdateTime\":\"2022-11-10 17:27:07\",\"crdctUuid\":\"053E7EE50F6144728AF0BC5B6B7B4341\",\"crdctValue\":\"\",\"depth\":5,\"ext\":{},\"fullType\":\"11\",\"iconSkin\":\"xtree-depth-5 xtree-type-1 \",\"intMap\":{},\"lastUpdateTime\":\"2022-11-10 17:27:07\",\"leaf\":false,\"levelCode\":\"000H010001\",\"majorType\":\"1\",\"minorType\":\"1\",\"order\":3,\"parent\":true,\"parentUuid\":\"393D43AE73EB483DAC22040B128C936C\",\"pathCode\":\"/DICT/BIGDATA/RDMP/dataformat/picture\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"图形图像\",\"unid\":2064303,\"uuid\":\"053E7EE50F6144728AF0BC5B6B7B4341\"}]}",
+        "request_body_json": "{}",
+        "parameter_json": "{}"
+    }
+    zuzhi_o = {
+        "time": "2024-08-29T10:37:37",
+        "app": "59.202.68.95:8215",
+        "app_name": "高质量数据中心",
+        "flow_id": "78906584529497",
+        "urld": "http://59.202.68.95:8215/dataasset/api/dataasset/other/queryOrgTree",
+        "url": "http://59.202.68.95:8215/dataasset/api/dataasset/other/queryOrgTree",
+        "name": "数据目录-目录管理-组织结构",
+        "account": "徐君",
+        "auth_type": 5,
+        "dstport": 8215,
+        "srcip": "10.18.80.10",
+        "parameter": "uuid=ORG_21C028E1CF26409E80A270821D44AC4C",
+        "real_ip": "",
+        "http_method": "POST",
+        "status": 200,
+        "api_type": "5",
+        "qlength": 0,
+        "yw_count": 0,
+        "length": "14604",
+        "user_info": "{\"账户名\": \"徐君\", \"职位名称\": \"瑞成科技\", \"工作电话\": \"0571-0000000\"}",
+        "srcport": 53759,
+        "dstip": "59.202.68.95",
+        "risk_level": "1",
+        "content_length": 14604,
+        "id": "1724899257612872868",
+        "age": 27062,
+        "content_type": "JSON",
+        "key": "\"\"",
+        "info": "{}",
+        "request_headers": "[{\"name\":\"Host\",\"value\":\"59.202.68.95:8215\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Content-Length\",\"value\":\"0\"},{\"name\":\"Accept\",\"value\":\"application\\/json, text\\/plain, *\\/*\"},{\"name\":\"Pragma\",\"value\":\"no-cache\"},{\"name\":\"Cache-Control\",\"value\":\"no-cache, no-store\"},{\"name\":\"X-Requested-With\",\"value\":\"XMLHttpRequest\"},{\"name\":\"access_token\",\"value\":\"f05856f2c95746e77cd220b231bffe12\"},{\"name\":\"User-Agent\",\"value\":\"Mozilla\\/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit\\/537.36 (KHTML, like Gecko) Chrome\\/120.0.0.0 Safari\\/537.36\"},{\"name\":\"Origin\",\"value\":\"http:\\/\\/59.202.68.95:8215\"},{\"name\":\"Referer\",\"value\":\"http:\\/\\/59.202.68.95:8215\\/dataSheet?activeId=302C64A00D6B458799DEEE96BDB442B1\"},{\"name\":\"Accept-Encoding\",\"value\":\"gzip, deflate\"},{\"name\":\"Accept-Language\",\"value\":\"zh-CN,zh;q=0.9\"},{\"name\":\"Cookie\",\"value\":\"JSESSIONID=46C46EF23678E74686464D2D3C3AC48C; wyhtml=\\/dataasset\\/_1918c9ecaa25735_1724641102498\"}]",
+        "response_headers": "[{\"name\":\"Server\",\"value\":\"nginx\\/1.24.0\"},{\"name\":\"Date\",\"value\":\"Thu, 29 Aug 2024 02:37:37 GMT\"},{\"name\":\"Content-Type\",\"value\":\"text\\/json;charset=UTF-8\"},{\"name\":\"Content-Length\",\"value\":\"14604\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Cache-Control\",\"value\":\"no-cache\"},{\"name\":\"Expires\",\"value\":\"0\"},{\"name\":\"Pragma\",\"value\":\"No-cache\"},{\"name\":\"Content-Language\",\"value\":\"zh-CN\"},{\"name\":\"Access-Control-Allow-Origin\",\"value\":\"*\"},{\"name\":\"Access-Control-Allow-Headers\",\"value\":\"X-Requested-With\"},{\"name\":\"Access-Control-Allow-Methods\",\"value\":\"GET,POST,OPTIONS\"}]",
+        "request_body": "",
+        "response_body": "{\"success\":true,\"fieldErrors\":{},\"actionErrors\":[],\"messages\":[\"操作成功\"],\"totalCount\":17,\"data\":[{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委领导\",\"crorgLevelCode\":\"060000\",\"crorgName\":\"拱墅区委领导\",\"crorgOrder\":597,\"crorgOuterUuid\":\"GO_17da9e84bad74f5abc4b7a0e327dfd73\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576455,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_F1B0DA8C766E48FB989B00AAA216DBC9\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":true,\"levelCode\":\"060000\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":597,\"parent\":false,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委领导\",\"type\":\"2\",\"unid\":5576455,\"uuid\":\"ORG_F1B0DA8C766E48FB989B00AAA216DBC9\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委办公室\",\"crorgLevelCode\":\"060001\",\"crorgName\":\"拱墅区委办公室\",\"crorgOrder\":991,\"crorgOuterUuid\":\"GO_caba3451996746278cb486da6d35153a\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576456,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_6F8BDFED24AE4DD6AFE00FC67D0E0BDF\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060001\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":991,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委办公室\",\"type\":\"2\",\"unid\":5576456,\"uuid\":\"ORG_6F8BDFED24AE4DD6AFE00FC67D0E0BDF\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区纪委区监委\",\"crorgLevelCode\":\"060002\",\"crorgName\":\"拱墅区纪委区监委\",\"crorgOrder\":1360,\"crorgOuterUuid\":\"GO_c4f4a71a902f4c9aa9f268be9197c219\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576457,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_359556E3BD8149C6AFD40E6650C668C7\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060002\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":1360,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区纪委区监委\",\"type\":\"2\",\"unid\":5576457,\"uuid\":\"ORG_359556E3BD8149C6AFD40E6650C668C7\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委组织部\",\"crorgLevelCode\":\"060003\",\"crorgName\":\"拱墅区委组织部\",\"crorgOrder\":1710,\"crorgOuterUuid\":\"GO_2d0a4ad40a3b40d9be5938865101d694\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576458,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_6757E6884D044C029A790095ED8D4AE4\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060003\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":1710,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委组织部\",\"type\":\"2\",\"unid\":5576458,\"uuid\":\"ORG_6757E6884D044C029A790095ED8D4AE4\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委宣传部\",\"crorgLevelCode\":\"060004\",\"crorgName\":\"拱墅区委宣传部\",\"crorgOrder\":2029,\"crorgOuterUuid\":\"GO_fe954d4f65db477498e50f6915140d32\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576459,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_E3F4DD397B2840088A71F1ED0DAEDE42\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060004\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":2029,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委宣传部\",\"type\":\"2\",\"unid\":5576459,\"uuid\":\"ORG_E3F4DD397B2840088A71F1ED0DAEDE42\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委统战部\",\"crorgLevelCode\":\"060005\",\"crorgName\":\"拱墅区委统战部\",\"crorgOrder\":2314,\"crorgOuterUuid\":\"GO_d2e5fd0d432d4182972d9bdc37421867\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576460,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_906A2B2D6F504A33BFB9CB67F8A078EE\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060005\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":2314,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委统战部\",\"type\":\"2\",\"unid\":5576460,\"uuid\":\"ORG_906A2B2D6F504A33BFB9CB67F8A078EE\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委政法委\",\"crorgLevelCode\":\"060006\",\"crorgName\":\"拱墅区委政法委\",\"crorgOrder\":2553,\"crorgOuterUuid\":\"GO_c5b087c3d895486d80e0982347c83fde\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576461,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_567B44AC197B4558A33FE470CA97A0A1\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060006\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":2553,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委政法委\",\"type\":\"2\",\"unid\":5576461,\"uuid\":\"ORG_567B44AC197B4558A33FE470CA97A0A1\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委改革办\",\"crorgLevelCode\":\"060007\",\"crorgName\":\"拱墅区委改革办\",\"crorgOrder\":2759,\"crorgOuterUuid\":\"GO_fc60d6e048204209ab092e401edcffaa\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576462,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_2FF96EDD1094407F965D518DB05528B5\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060007\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":2759,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委改革办\",\"type\":\"2\",\"unid\":5576462,\"uuid\":\"ORG_2FF96EDD1094407F965D518DB05528B5\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委政研室\",\"crorgLevelCode\":\"060008\",\"crorgName\":\"拱墅区委政研室\",\"crorgOrder\":2928,\"crorgOuterUuid\":\"GO_0d38034d9a3a4aaeb923f05b244cc6f5\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576463,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_42CCD11143684939AEA326121BE26850\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":true,\"levelCode\":\"060008\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":2928,\"parent\":false,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委政研室\",\"type\":\"2\",\"unid\":5576463,\"uuid\":\"ORG_42CCD11143684939AEA326121BE26850\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委编办\",\"crorgLevelCode\":\"060009\",\"crorgName\":\"拱墅区委编办\",\"crorgOrder\":3064,\"crorgOuterUuid\":\"GO_0f28be9f989443068bb06158e02e291e\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576464,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_F5CEC5DEC4374823BC35E03C58FB5E2B\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"060009\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3064,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委编办\",\"type\":\"2\",\"unid\":5576464,\"uuid\":\"ORG_F5CEC5DEC4374823BC35E03C58FB5E2B\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委直属机关工委\",\"crorgLevelCode\":\"06000A\",\"crorgName\":\"拱墅区委直属机关工委\",\"crorgOrder\":3177,\"crorgOuterUuid\":\"GO_36d848d6dcda4af399a358555b398664\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576465,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_E8A7DEBE3DDF4410B34DED9F3CAB6B0E\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000A\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3177,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委直属机关工委\",\"type\":\"2\",\"unid\":5576465,\"uuid\":\"ORG_E8A7DEBE3DDF4410B34DED9F3CAB6B0E\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委巡察机构\",\"crorgLevelCode\":\"06000B\",\"crorgName\":\"拱墅区委巡察机构\",\"crorgOrder\":3270,\"crorgOuterUuid\":\"GO_e67d034429aa43378e5e63c6683eea11\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576466,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_878E9A6C79544938A6D649579E55F38B\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000B\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3270,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委巡察机构\",\"type\":\"2\",\"unid\":5576466,\"uuid\":\"ORG_878E9A6C79544938A6D649579E55F38B\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区信访局\",\"crorgLevelCode\":\"06000C\",\"crorgName\":\"拱墅区信访局\",\"crorgOrder\":3348,\"crorgOuterUuid\":\"GO_cb8637b3616640ac91464931bd3bbb91\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576467,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_E03D96311D7548468DA29F1C7441E040\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000C\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3348,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区信访局\",\"type\":\"2\",\"unid\":5576467,\"uuid\":\"ORG_E03D96311D7548468DA29F1C7441E040\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委老干部局\",\"crorgLevelCode\":\"06000D\",\"crorgName\":\"拱墅区委老干部局\",\"crorgOrder\":3421,\"crorgOuterUuid\":\"GO_55e6368393a14eae90b03b8da363982e\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576468,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_8C72187200B94178B0409D6B4FD70699\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000D\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3421,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委老干部局\",\"type\":\"2\",\"unid\":5576468,\"uuid\":\"ORG_8C72187200B94178B0409D6B4FD70699\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区委党史研究室\",\"crorgLevelCode\":\"06000E\",\"crorgName\":\"拱墅区委党史研究室\",\"crorgOrder\":3484,\"crorgOuterUuid\":\"GO_afae709447654bfb97bffcfd66fc8f69\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576469,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_279EF9C45AD34C21B8F797A70A30C870\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000E\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3484,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区委党史研究室\",\"type\":\"2\",\"unid\":5576469,\"uuid\":\"ORG_279EF9C45AD34C21B8F797A70A30C870\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区关工委\",\"crorgLevelCode\":\"06000F\",\"crorgName\":\"拱墅区关工委\",\"crorgOrder\":3541,\"crorgOuterUuid\":\"GO_b758a3f121ed4c48b09297e4477b471a\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576470,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_4606D946D5314C10BB053D9B2FBEC8C6\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000F\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3541,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区关工委\",\"type\":\"2\",\"unid\":5576470,\"uuid\":\"ORG_4606D946D5314C10BB053D9B2FBEC8C6\"},{\"cmmNodeType\":\"2\",\"crorgCreateTime\":\"2023-12-11 16:32:16\",\"crorgFullName\":\"拱墅区社会治理中心\",\"crorgLevelCode\":\"06000G\",\"crorgName\":\"拱墅区社会治理中心\",\"crorgOrder\":3588,\"crorgOuterUuid\":\"GO_3c9b0329f140443fbd042f75d7603cde\",\"crorgParentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"crorgStatus\":\"1\",\"crorgType\":\"2\",\"crorgUnid\":5576471,\"crorgUpdateTime\":\"2023-12-11 16:54:38\",\"crorgUuid\":\"ORG_0DEDE216398C41E49206EB1B2A630F2E\",\"depth\":3,\"ext\":{},\"fullType\":\"22\",\"iconSkin\":\"xtree-depth-3 xtree-type-2 \",\"intMap\":{},\"lastUpdateTime\":\"2023-12-11 16:54:38\",\"leaf\":false,\"levelCode\":\"06000G\",\"majorType\":\"2\",\"minorType\":\"2\",\"order\":3588,\"parent\":true,\"parentUuid\":\"ORG_21C028E1CF26409E80A270821D44AC4C\",\"status\":\"1\",\"strList\":[],\"strMap\":{},\"text\":\"拱墅区社会治理中心\",\"type\":\"2\",\"unid\":5576471,\"uuid\":\"ORG_0DEDE216398C41E49206EB1B2A630F2E\"}]}",
+        "request_body_json": "{}",
+        "parameter_json": "{}"
+    }
+    dic_o = {
+        "time": "2024-08-29T10:39:22",
+        "app": "59.202.68.95:8215",
+        "app_name": "高质量数据中心",
+        "flow_id": "1801768297740086",
+        "urld": "http://59.202.68.95:8215/dataasset/api/dataasset/assetTable/queryTableInfo",
+        "url": "http://59.202.68.95:8215/dataasset/api/dataasset/other/queryOrgTree",
+        "name": "数据服务-数据服务-选择源表",
+        "account": "徐君",
+        "auth_type": 5,
+        "dstport": 8215,
+        "srcip": "10.18.80.10",
+        "parameter": "uuid==ORG_21C028E1CF26409E80A270821D44AC4C",
+        "real_ip": "",
+        "http_method": "GET",
+        "status": 200,
+        "api_type": "5",
+        "qlength": 0,
+        "yw_count": 0,
+        "length": "90",
+        "user_info": "{\"账户名\": \"徐君\", \"职位名称\": \"瑞成科技\", \"工作电话\": \"0571-0000000\"}",
+        "srcport": 53904,
+        "dstip": "59.202.68.95",
+        "risk_level": "1",
+        "content_length": 90,
+        "id": "1724899363280306270",
+        "age": 81915,
+        "content_type": "JSON",
+        "key": "\"\"",
+        "info": "{}",
+        "request_headers": "[{\"name\":\"Host\",\"value\":\"59.202.68.95:8215\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Accept\",\"value\":\"application\\/json, text\\/plain, *\\/*\"},{\"name\":\"Pragma\",\"value\":\"no-cache\"},{\"name\":\"Cache-Control\",\"value\":\"no-cache, no-store\"},{\"name\":\"X-Requested-With\",\"value\":\"XMLHttpRequest\"},{\"name\":\"access_token\",\"value\":\"f05856f2c95746e77cd220b231bffe12\"},{\"name\":\"User-Agent\",\"value\":\"Mozilla\\/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit\\/537.36 (KHTML, like Gecko) Chrome\\/120.0.0.0 Safari\\/537.36\"},{\"name\":\"Content-Type\",\"value\":\"application\\/json;charset=utf-8\"},{\"name\":\"Referer\",\"value\":\"http:\\/\\/59.202.68.95:8215\\/dataSheet?activeId=302C64A00D6B458799DEEE96BDB442B1\"},{\"name\":\"Accept-Encoding\",\"value\":\"gzip, deflate\"},{\"name\":\"Accept-Language\",\"value\":\"zh-CN,zh;q=0.9\"},{\"name\":\"Cookie\",\"value\":\"JSESSIONID=46C46EF23678E74686464D2D3C3AC48C; wyhtml=\\/dataasset\\/_1918c9ecaa25735_1724641102498\"}]",
+        "response_headers": "[{\"name\":\"Server\",\"value\":\"nginx\\/1.24.0\"},{\"name\":\"Date\",\"value\":\"Thu, 29 Aug 2024 02:39:22 GMT\"},{\"name\":\"Content-Type\",\"value\":\"text\\/json;charset=UTF-8\"},{\"name\":\"Content-Length\",\"value\":\"90\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Cache-Control\",\"value\":\"no-cache\"},{\"name\":\"Expires\",\"value\":\"0\"},{\"name\":\"Pragma\",\"value\":\"No-cache\"},{\"name\":\"Content-Language\",\"value\":\"zh-CN\"},{\"name\":\"Access-Control-Allow-Origin\",\"value\":\"*\"},{\"name\":\"Access-Control-Allow-Headers\",\"value\":\"X-Requested-With\"},{\"name\":\"Access-Control-Allow-Methods\",\"value\":\"GET,POST,OPTIONS\"}]",
+        "request_body": "",
+        "response_body": "{\"success\":true,\"fieldErrors\":{},\"actionErrors\":[],\"messages\":[],\"totalCount\":0,\"data\":[]}",
+        "request_body_json": "{}",
+        "parameter_json": "{\"page\":\"1\",\"size\":\"10\",\"orgUuid\":\"ORG_6F8BDFED24AE4DD6AFE00FC67D0E0BDF\"}"
+    }
+    with open("./tree_dic.pkl", "rb") as fp:
+
+        dict_tree = pickle.load(fp)
+
+    ss = read_model_identify(an, dic_o, dict_tree)
+
+    print(ss)
