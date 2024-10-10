@@ -141,7 +141,7 @@ def analyze_handle(con, o_data):
 
         for imp_name, value in data.items():  # imp_name :账户、密码
             project_body[key][imp_name] = {}  # {”模型三“:{"账户":{}}}
-            for inx, imd_pos in value.items():
+            for inx, imd_pos in value.items():  # inx表示标注信息在日志信息的位置
                 # 给出存储容器信息
                 imp_pos = {}
                 ht_dic = {}
@@ -151,17 +151,17 @@ def analyze_handle(con, o_data):
 
                 for imd, idx_pos in imd_pos.items():  # imd 为标识的数据，idx_pos为标识数据所在的位置，索引
                     # 找出数据的索引 信息
-                    idx = idx_pos["idx"]
-                    pos = idx_pos["pos"]
-                    imp_uid = idx_pos["imp_uid"]
+                    idx = idx_pos["idx"]  # 表示日志信息的位置
+                    pos = idx_pos["pos"]  # 表示所在日志信息的字段
+                    imp_uid = idx_pos["imp_uid"]  # 表示标注文本的唯一ID
                     imp_uid_lst.append(imp_uid)
-                    ann_index = idx_pos["ann_index"]
+                    ann_index = idx_pos["ann_index"]  # 表示第几个标注文本
                     ann_index_lst.append(ann_index)
                     # 获取http当前信息
-                    http_info = http_data.get(idx)
+                    http_info = http_data.get(idx)  # 获取到日志信息的数据
 
                     # 添加函数 去除掉imps之后 留下识别的字段信息，请求体跟响应体除外
-                    ht_dic, imp_pos = data_search(http_info, imd, imp_pos, ht_dic)
+                    ht_dic, imp_pos = data_search(http_info, imd, imp_pos, ht_dic, pos)  # 日志信息，标识数据，标注位置，
 
                     # url_dic[imd] = http_info["url"]
                     imp_pos.setdefault(imd, pos)
@@ -180,7 +180,7 @@ def analyze_handle(con, o_data):
     return project_body, json_class_groups
 
 
-def data_search(http_info, imd, imp_pos, ht_dic):
+def data_search(http_info, imd, imp_pos, ht_dic, pos):
     """
     :param http_info: 源数据信息
     :param imd:  标识数据信息
@@ -193,17 +193,18 @@ def data_search(http_info, imd, imp_pos, ht_dic):
         if http_key == "imps":
             continue
         else:
-            if header_judge(data):
+            if header_judge(data) and http_key == pos:
                 data = ujson.loads(data)
                 data, index_lst = headers_search(data, imd)
                 if index_lst:
                     ht_dic.setdefault(http_key, {}).setdefault(imd, data)
                     imp_pos.setdefault(imd, index_lst)
             else:
-                index_lst = body_par_search(data, imd)
-                if index_lst:
-                    ht_dic.setdefault(http_key, {}).setdefault(imd, data)
-                    imp_pos.setdefault(imd, index_lst)
+                if http_key == pos:
+                    index_lst = body_par_search(data, imd)
+                    if index_lst:
+                        ht_dic.setdefault(http_key, {}).setdefault(imd, data)
+                        imp_pos.setdefault(imd, index_lst)
     return ht_dic, imp_pos
 
 
@@ -428,11 +429,11 @@ def rule_info(data_source, imp_pos):
     :param http_pos:
     :return:  根据http日志的位置去进行不同的数据提取
     """
-
     if all(isinstance(value, str) for value in data_source.values()):
         continuous_start_df, continuous_end_df, result_df, end_df = start_end_df_handle(data_source, imp_pos)
         tol_info = continuous_df(result_df, end_df, continuous_start_df, continuous_end_df)
         # result["default"] = tol_info
+
         return tol_info
 
     # elif http_pos == "request_headers" or http_pos == "response_headers":
@@ -460,7 +461,7 @@ def handle_project(con, o_data):
     :return:
     """
     project_body, json_class_groups = analyze_handle(con, o_data)
-
+    print(project_body)
     str_rules = {}
     for model_key, pro_dic in project_body.items():  # project_body: key:{"账户":{0:{"request_body":""}}}
 
@@ -474,6 +475,7 @@ def handle_project(con, o_data):
                 imp_uid = data.get("imp_uid")
                 # 需要对 data进行循环 这样才能动态的识别字段信息
                 str_rules = dynamic_data(data, str_rules, imp_pos, imp_name, a_index, model_key, imp_uid)
+                print(str_rules)
     # print(json_class_groups)
     json_rules = fodr_rules(json_class_groups)
     for model_key, model_value in str_rules.items():
@@ -1802,17 +1804,15 @@ def merge_dicts(d1, d2):
     return d1
 
 
-def intell_sen1(model_file_data, monitor):
+def intell_sen1(model_file_data, monitor, sen_level):
     key_ch = {"response_body": "响应体", "request_body": "请求体", "parameter": "参数"}
     total_info = {}
     total_count = {}
     info = {}
     level_lst = []
     cls_lst = []
-    count = {}
+    counts = {}
     max_level = 0
-    # sen_level = {"1":"L1","2":"L2","3":"L3","4":"L4"}
-    sen_level = {"L1": 1, "L2": 2, "L3": 3, "L4": 4}
     analy_data = read_model_identify(model_file_data, monitor)
     if isinstance(analy_data, dict):
         imp_data = analy_data.get("data")
@@ -1821,8 +1821,10 @@ def intell_sen1(model_file_data, monitor):
                 ch_pos = key_ch.get(pos, pos)
                 sens = {}
                 for cls_level, sen_data in rule_data.items():
-                    cls, level_ch = cls_level.split("-")
-                    level_lst.append(int(sen_level.get(level_ch)))
+                    cls, level = cls_level.split("-")
+                    # level_lst.append(sen_level.get(level_ch))
+                    level_lst.append(int(level))
+                    level_ch = sen_level.get(int(level))
                     cls_lst.append(cls)
                     for k, v in sen_data.items():
                         sens.setdefault(k, []).extend(v)
@@ -1834,14 +1836,14 @@ def intell_sen1(model_file_data, monitor):
                                                                                                                        set(v))))
                         info.setdefault(ch_pos, {}).setdefault(cls, {}).setdefault(level_ch, {}).setdefault(k, {
                             "数量": len(list(set(v))), "内容": list(set(v))})
-                count.setdefault(ch_pos, {k: len(list(set(v))) for k, v in sens.items()})
+                counts.setdefault(ch_pos, {k: len(list(set(v))) for k, v in sens.items()})
 
             if level_lst:
                 max_level = max(level_lst)
             else:
                 max_level = 0
             cls_lst = list(set(cls_lst))
-    return total_info, total_count, max_level, info, cls_lst, count
+    return total_info, total_count, max_level, info, cls_lst, counts
 
 
 # 针对相同接口，根据接口参数的不同来变换接口事件的名称
@@ -2183,6 +2185,16 @@ def sched_dele(user_dic):
         del user_info[key]
         del user_dic[key]
     # dump_pkl("/data/xlink/user_info.pkl", user_info)
+
+
+# 新增过滤标签模型信息
+def filter_label(model_data, label_key, label_list):
+    model_file_data = {}
+    for model_key, rule_data in model_data.items():
+        label_info = rule_data.get("label_info", {})
+        if label_info.get(label_key) not in label_list:
+            model_file_data[model_key] = rule_data
+    return model_file_data
 
 
 if __name__ == '__main__':
