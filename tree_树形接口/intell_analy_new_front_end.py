@@ -1311,7 +1311,6 @@ def cification(key, data_soure, imps, rules):
                     list(set(paths)))
     return rules
 
-
 def find_values_in_dict_little(data, target, imp_type, path='', found_paths=None):
     if found_paths is None:
         found_paths = {str(target): []}
@@ -1341,11 +1340,68 @@ def find_values_in_dict_little(data, target, imp_type, path='', found_paths=None
         if data == target:
             found_paths[str(target)].append(path)
         for index, item in enumerate(data):
-            if imp_type != "JSON":
-                current_path = f"{path}-LIST"
+            # if isinstance(item,list):
+            if isinstance(item, str):
+                if item == target:
+                    if imp_type != "JSON":
+                        current_path = f"{path}" +"." +f"-LIST[{index}]"
+                    else:
+                        current_path = f"{path}" +"." +f"-[{index}]"
+                    found_paths[str(target)].append(current_path)
+                else:
+                    continue
             else:
-                # current_path = f"{path}-[{index}]"
-                current_path = f"{path}-[0]"
+                if imp_type != "JSON":
+                    current_path = f"{path}-LIST"
+                else:
+                    # current_path = f"{path}-[{index}]"
+                    current_path = f"{path}-[0]"
+                find_values_in_dict_little(item, target, imp_type, current_path, found_paths)
+
+    return found_paths
+
+def find_values_in_dict_little1(data, target, imp_type, path='', found_paths=None):
+    if found_paths is None:
+        found_paths = {str(target): []}
+
+    if isinstance(data, dict):
+        # 判断递归的data是否等于target
+        if data == target:
+            found_paths[str(target)].append(path)
+        for key, value in data.items():
+            current_path = f'{path}.{key}' if path else key
+
+            if value == target or str(key) == str(target):
+                found_paths[str(target)].append(current_path)
+
+            if isinstance(value, str) and is_json_string(value):
+                try:
+                    json_value = ujson.loads(value)
+                    if json_value == target:
+                        found_paths[str(target)].append(current_path + "-JSON")
+                    find_values_in_dict_little(json_value, target, imp_type, current_path + "-JSON",
+                                               found_paths)
+                except ValueError:
+                    pass
+            elif isinstance(value, (dict, list)):
+                find_values_in_dict_little(value, target, imp_type, current_path, found_paths)
+    elif isinstance(data, list):
+        if data == target:
+            found_paths[str(target)].append(path)
+        for index, item in enumerate(data):
+            # if isinstance(item,list):
+            if isinstance(item, str):
+                if item == target:
+                    if imp_type != "JSON":
+                        current_path = f"{path}-LIST[{index}]"
+                    else:
+                        current_path = f"{path}-[{index}]"
+            else:
+                if imp_type != "JSON":
+                    current_path = f"{path}-LIST"
+                else:
+                    # current_path = f"{path}-[{index}]"
+                    current_path = f"{path}-[0]"
             find_values_in_dict_little(item, target, imp_type, current_path, found_paths)
 
     return found_paths
@@ -1399,198 +1455,7 @@ def json_identify(data_storage, http_data, rule, ch_name, uid):
     return data_storage
 
 
-def get_value_by_path1(data_source, path, value_lst):
-    """
-    最老版本 嵌套不能用
-    :param data_source:
-    :param path:
-    :param value_lst:
-    :return:
-    """
-    # 先将请求响应体进行转化为dict对象
-    try:
-        current = ujson.loads(data_source)
-
-    except:
-        current = data_source
-
-    # 从给定的数据中进行识别
-    if isinstance(current, dict):
-        temp_current = current
-        found = True
-        path_list = path.split(".")
-        for p in path_list:
-            # 循环当前path 每段路径，先判断JSON数据
-            if p.endswith("-JSON"):
-                key = p.split("-")[0]
-                temp_current = temp_current.get(key)
-                if not current:
-                    found = False
-                    break
-                temp_current = ujson.loads(temp_current)
-            # 判断是否为列表数据
-            elif "-[" in p:
-                key, index = p.split("-[")
-                key = key.strip()
-                index = int(index[:-1])
-                temp_current = temp_current.get(key, [])  # 获取到该key值 下面的列表
-                if not temp_current or index >= len(temp_current):
-                    found = False
-                    break
-                # 已经判断是列表，进行循环查询数据
-
-                # temp_current = temp_current[index]
-                # 新增代码 判断循环列表数据
-                if isinstance(temp_current, list) and path_list.index(p) < len(path_list) - 1 and (
-                        "-[" not in path_list[
-                    path_list.index(p) + 1]):
-                    for item in temp_current:
-                        value = item.get(path_list[path_list.index(p) + 1])
-                        if value:
-                            found = True
-                            value_lst.append(value)
-                temp_current = temp_current[index]
-            else:
-
-                temp_current = temp_current.get(p)
-            if not temp_current:
-                found = False
-                break
-        if found and not isinstance(temp_current, list):
-            if temp_current not in value_lst:
-                value_lst.append(temp_current)
-            return value_lst
-    return []
-
-
-def get_value_by_path2(data_source, path, value_lst):
-    """
-    最新修改完列表值获取的操作
-    :param data_source:
-    :param path:
-    :param value_lst:
-    :return:
-    """
-    try:
-        current = ujson.loads(data_source) if isinstance(data_source, str) else data_source
-    except:
-        current = data_source
-    # 加一个条件当前路径在列表中的索引,用作最后的值判断啊
-    idx_in_lst = 0  # 默认为0
-    if isinstance(current, dict):
-        temp_current = current
-        found = True
-        path_list = path.split(".")
-        for index, p in enumerate(path_list):
-            if p.endswith("-JSON"):
-                key = p.split("-")[0]
-                temp_current = temp_current.get(key)
-                idx_in_lst = index
-                if not temp_current:
-                    found = False
-                    break
-                temp_current = ujson.loads(temp_current)
-            elif "-LIST" in p:
-                key, _ = p.split("-LIST")
-                key = key.strip()
-
-                temp_current = temp_current.get(key, [])  # 循环到这里就是一个列表信息
-                idx_in_lst = index
-                if not temp_current:
-                    found = False
-                    break
-                if p != path_list[-1]:  # 如果路径还未结束，则需要继续处理列表中的元素
-
-                    for item in temp_current:  # 循环该列表信息
-                        value_lst = get_value_by_path(item, ".".join(path_list[index + 1:]), value_lst)
-                    break
-                # 不再需要这个else，因为已经在循环中添加了列表中的每个元素
-            else:
-                temp_current = temp_current.get(p)
-                idx_in_lst = index
-            if not temp_current:
-                found = False
-                break
-
-        # if found and not isinstance(temp_current, list):
-        # 判断 当前值不为列表值，如果是列表值则当前的路径必须是最后段
-        if found and ((not isinstance(temp_current, list)) or (
-                (isinstance(temp_current, list)) and idx_in_lst == len(path_list) - 1)):
-            if temp_current not in value_lst:
-                value_lst.append(temp_current)
-
-    return value_lst
-
-
-def get_value_by_path3(data_source, path, value_lst):
-    """
-    最新修改完列表值上添加索引操作
-    :param data_source:
-    :param path:
-    :param value_lst:
-    :return:
-    """
-    try:
-        current = ujson.loads(data_source) if isinstance(data_source, str) else data_source
-    except:
-        current = data_source
-    # 加一个条件当前路径在列表中的索引,用作最后的值判断啊
-    idx_in_lst = 0  # 默认为0
-    if isinstance(current, dict):
-        temp_current = current
-        found = True
-        path_list = path.split(".")
-        for index, p in enumerate(path_list):
-            if p.endswith("-JSON"):
-                key = p.split("-")[0]
-                temp_current = temp_current.get(key)
-                idx_in_lst = index
-                if not temp_current:
-                    found = False
-                    break
-                temp_current = ujson.loads(temp_current)
-            elif "-LIST" in p:
-                key, _ = p.split("-LIST")
-                key = key.strip()
-
-                temp_current = temp_current.get(key, [])  # 循环到这里就是一个列表信息
-                idx_in_lst = index
-                if not temp_current:
-                    found = False
-                    break
-                if p != path_list[-1]:  # 如果路径还未结束，则需要继续处理列表中的元素
-
-                    for item in temp_current:  # 循环该列表信息
-                        value_lst = get_value_by_path(item, ".".join(path_list[index + 1:]), value_lst)
-                    break
-                # 不再需要这个else，因为已经在循环中添加了列表中的每个元素
-            elif "-[" in p and p.endswith("]"):
-                key, index = p.split("-[")
-                key = key.strip()
-                index = int(index[:-1])
-                temp_current = temp_current.get(key, [])
-                if not temp_current or index >= len(temp_current):
-                    found = False
-                    break
-                temp_current = temp_current[index]
-            else:
-                temp_current = temp_current.get(p)
-                idx_in_lst = index
-            if not temp_current:
-                found = False
-                break
-
-        # if found and not isinstance(temp_current, list):
-        # 判断 当前值不为列表值，如果是列表值则当前的路径必须是最后段
-        if found and ((not isinstance(temp_current, list)) or (
-                (isinstance(temp_current, list)) and idx_in_lst == len(path_list) - 1)):
-            if temp_current not in value_lst:
-                value_lst.append(temp_current)
-
-    return value_lst
-
-
-def get_value_by_path(data_source, path, value_lst):
+def get_value_by_pat1(data_source, path, value_lst):
     """
     根据给定路径获取数据源中的值并添加到value_lst中
     :param data_source: 数据源，可以是JSON字符串、字典或列表
@@ -1681,6 +1546,102 @@ def get_value_by_path(data_source, path, value_lst):
 
     return value_lst
 
+def get_value_by_path(data_source, path, value_lst):
+    """
+    根据给定路径获取数据源中的值并添加到value_lst中
+    :param data_source: 数据源，可以是JSON字符串、字典或列表
+    :param path: 访问路径，使用"."分隔
+    :param value_lst: 存储结果值的列表
+    :return: value_lst
+    """
+    try:
+        current = ujson.loads(data_source) if isinstance(data_source, str) else data_source
+    except Exception as e:
+        print(f"Error loading JSON: {e}")
+        return value_lst
+
+    path_list = path.split(".")
+
+    idx_in_lst = 0  # 当前路径在列表中的索引，用于最后的值判断
+
+    def traverse_path(temp_current, path_list, value_lst, idx_in_lst):
+        found = True
+        for index, p in enumerate(path_list):
+            if p.endswith("-JSON"):
+                key = p.split("-")[0]
+                temp_current = temp_current.get(key)
+                idx_in_lst = index
+                if not temp_current:
+                    found = False
+                    break
+                try:
+                    temp_current = ujson.loads(temp_current)
+                except Exception as e:
+                    print(f"Error loading JSON from key '{key}': {e}")
+                    found = False
+                    break
+
+            elif "-LIST" in p:
+                key, l_index = p.split("-LIST")
+                key = key.strip()
+                # 判断是否是空如果是空就是列表嵌套
+                if not key:
+                    if l_index:
+                        idx_in_lst = int(l_index.replace("[","").replace("]",""))
+                        temp_current = temp_current[idx_in_lst]
+                else:
+                    temp_current = temp_current.get(key, [])
+                    idx_in_lst = index
+                if not temp_current:
+                    found = False
+                    break
+                if p != path_list[-1]:  # 如果路径还未结束，则需要继续处理列表中的元素
+                    for item in temp_current:
+                        value_lst = traverse_path(item, path_list[index + 1:], value_lst, idx_in_lst)
+                    break
+            elif "-[" in p and p.endswith("]"):
+                key, index = p.split("-[")
+                key = key.strip()
+                try:
+                    index = int(index[:-1])
+                except ValueError:
+                    print(f"Invalid index in path: {p}")
+                    found = False
+                    break
+                temp_current = temp_current.get(key, [])
+                if not temp_current or index >= len(temp_current):
+                    found = False
+                    break
+                temp_current = temp_current[index]
+
+            else:
+                temp_current = temp_current.get(p)
+                idx_in_lst = index
+            if not temp_current:
+                found = False
+                break
+
+        if found and ((not isinstance(temp_current, list)) or (
+                isinstance(temp_current, list) and idx_in_lst == len(path_list) - 1)):
+            if temp_current not in value_lst:
+                value_lst.append(temp_current)
+        return value_lst
+
+    # 如果数据源是列表，遍历每个元素
+    if isinstance(current, list):
+        # 如果刚开始就是list 那么第一个path  不是 -LIST 就是 -[0]
+
+        if path_list[0] == "-LIST":
+            # 如果是第一个
+            for item in current:
+                value_lst = traverse_path(item, path_list[1:], value_lst, idx_in_lst)
+        else:
+            item = current[0]
+            value_lst = traverse_path(item, path_list[1:], value_lst, idx_in_lst)
+    else:
+        value_lst = traverse_path(current, path_list, value_lst, idx_in_lst)
+
+    return value_lst
 
 def model_data_extract(ch_name, o, data_storage, imp_data, l_info, dict_tree=None, MapField=None, assoc_str=""):
     """
