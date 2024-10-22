@@ -8,12 +8,16 @@ from collections import defaultdict
 import configparser
 
 # 读取配置文件
-path_config = configparser.ConfigParser()
-path_config.read('./config.ini')
+# path_config = configparser.ConfigParser()
+# path_config.read('./config.ini')
 # path_config.read('config_window.ini')
 # 获取字符信息# 获取 start_chars 和 end_chars
-start_chars_str = path_config.get('Characters', 'start_chars')
-end_chars_str = path_config.get('Characters', 'end_chars')
+path_config = {
+    'start_chars': "&,;",
+    'end_chars': "&,;"
+}
+start_chars_str = path_config.get('start_chars')
+end_chars_str = path_config.get('end_chars')
 start_chars = [char.strip() for char in start_chars_str.split(',')]
 end_chars = [char.strip() for char in end_chars_str.split(',')]
 
@@ -1311,6 +1315,7 @@ def cification(key, data_soure, imps, rules):
                     list(set(paths)))
     return rules
 
+
 def find_values_in_dict_little(data, target, imp_type, path='', found_paths=None):
     if found_paths is None:
         found_paths = {str(target): []}
@@ -1337,28 +1342,32 @@ def find_values_in_dict_little(data, target, imp_type, path='', found_paths=None
             elif isinstance(value, (dict, list)):
                 find_values_in_dict_little(value, target, imp_type, current_path, found_paths)
     elif isinstance(data, list):
+
         if data == target:
             found_paths[str(target)].append(path)
+        # 判断是否第一次进来就是list,path就是空
         for index, item in enumerate(data):
             # if isinstance(item,list):
             if isinstance(item, str):
                 if item == target:
                     if imp_type != "JSON":
-                        current_path = f"{path}" +"." +f"-LIST[{index}]"
+                        current_path = f"{path}" + "." + f"-LIST[{index}]"
                     else:
-                        current_path = f"{path}" +"." +f"-[{index}]"
+                        current_path = f"{path}" + "." + f"-[{index}]"
                     found_paths[str(target)].append(current_path)
                 else:
                     continue
             else:
                 if imp_type != "JSON":
                     current_path = f"{path}-LIST"
-                else:
-                    # current_path = f"{path}-[{index}]"
+                elif imp_type == "JSON" and path:
                     current_path = f"{path}-[0]"
+                else:
+                    current_path = f"{path}-[{index}]"
                 find_values_in_dict_little(item, target, imp_type, current_path, found_paths)
 
     return found_paths
+
 
 def find_values_in_dict_little1(data, target, imp_type, path='', found_paths=None):
     if found_paths is None:
@@ -1455,7 +1464,7 @@ def json_identify(data_storage, http_data, rule, ch_name, uid):
     return data_storage
 
 
-def get_value_by_pat1(data_source, path, value_lst):
+def get_value_by_path1(data_source, path, value_lst):
     """
     根据给定路径获取数据源中的值并添加到value_lst中
     :param data_source: 数据源，可以是JSON字符串、字典或列表
@@ -1546,6 +1555,7 @@ def get_value_by_pat1(data_source, path, value_lst):
 
     return value_lst
 
+
 def get_value_by_path(data_source, path, value_lst):
     """
     根据给定路径获取数据源中的值并添加到value_lst中
@@ -1587,7 +1597,7 @@ def get_value_by_path(data_source, path, value_lst):
                 # 判断是否是空如果是空就是列表嵌套
                 if not key:
                     if l_index:
-                        idx_in_lst = int(l_index.replace("[","").replace("]",""))
+                        idx_in_lst = int(l_index.replace("[", "").replace("]", ""))
                         temp_current = temp_current[idx_in_lst]
                 else:
                     temp_current = temp_current.get(key, [])
@@ -1629,19 +1639,27 @@ def get_value_by_path(data_source, path, value_lst):
 
     # 如果数据源是列表，遍历每个元素
     if isinstance(current, list):
-        # 如果刚开始就是list 那么第一个path  不是 -LIST 就是 -[0]
+        # 如果刚开始就是list 那么第一个path  不是 -LIST 就是 -[index]
 
         if path_list[0] == "-LIST":
             # 如果是第一个
             for item in current:
                 value_lst = traverse_path(item, path_list[1:], value_lst, idx_in_lst)
         else:
-            item = current[0]
-            value_lst = traverse_path(item, path_list[1:], value_lst, idx_in_lst)
+
+            c_index = int(path_list[0].replace("-[", "").replace("]", ""))
+            # 直接执行index值
+            item = current[c_index]
+            if isinstance(item, list):
+
+                get_value_by_path(item, ".".join(path_list[1:]).lstrip("."), value_lst)
+            else:
+                value_lst = traverse_path(item, path_list[1:], value_lst, idx_in_lst)
     else:
         value_lst = traverse_path(current, path_list, value_lst, idx_in_lst)
 
     return value_lst
+
 
 def model_data_extract(ch_name, o, data_storage, imp_data, l_info, dict_tree=None, MapField=None, assoc_str=""):
     """
@@ -2068,6 +2086,11 @@ def field_ch(MapField, ch_name, res):
             res_lst = []
             for v in res:
                 ch_map = MapField[ch_name]
+                if isinstance(v, bool):
+                    if v:
+                        v = "true"
+                    else:
+                        v = "false"
                 if str(v) in ch_map:
                     res_lst.append(ch_map[str(v)])
             return res_lst
@@ -2076,6 +2099,12 @@ def field_ch(MapField, ch_name, res):
             ch_map = MapField[ch_name]
             if str(res) in ch_map:
                 res = ch_map[str(res)]
+            return res
+        elif isinstance(res, bool):
+            if res:
+                res = "true"
+            else:
+                res = "false"
             return res
     else:
         return res
