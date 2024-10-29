@@ -57,14 +57,14 @@ def classify_data1(condition, datas):
                     json_entry_data["imps"].append(imp)
                     json_class_groups[key].setdefault(idx, json_entry_data)
                 else:
-                    if imp_pos in http_data:
-                        current_entry_data[imp_pos] = http_data[imp_pos]
-                    imp["annotated_index"] = imps_lst.index(imp)
-                    current_entry_data["imps"].append(imp)
-                    # 更新分类数据字典
-                    classified_groups[key].setdefault(idx,
-                                                      current_entry_data)  # {“测试7”:{"1":{"imps":[],"parameter":""}}}
-
+                    # if imp_pos in http_data:
+                    #     current_entry_data[imp_pos] = http_data[imp_pos]
+                    # imp["annotated_index"] = imps_lst.index(imp)
+                    # current_entry_data["imps"].append(imp)
+                    # # 更新分类数据字典
+                    # classified_groups[key].setdefault(idx,
+                    #                                   current_entry_data)  # {“测试7”:{"1":{"imps":[],"parameter":""}}}
+                    pass
     return classified_groups, json_class_groups
 
 
@@ -184,7 +184,7 @@ def analyze_handle(con, o_data):
     return project_body, json_class_groups
 
 
-def data_search(http_info, imd, imp_pos, ht_dic, pos):
+def data_search_old(http_info, imd, imp_pos, ht_dic, pos):
     """
     :param http_info: 源数据信息
     :param imd:  标识数据信息
@@ -212,7 +212,7 @@ def data_search(http_info, imd, imp_pos, ht_dic, pos):
     return ht_dic, imp_pos
 
 
-def header_judge(info):
+def header_judge_old(info):
     """
     :param info: 请求头 响应头 的字符串值
     :return:
@@ -223,7 +223,7 @@ def header_judge(info):
     return False
 
 
-def body_par_search(data, imd):
+def body_par_search_old(data, imd):
     """
     对请求体 响应体，参数
     :param data:
@@ -241,7 +241,7 @@ def body_par_search(data, imd):
     return []
 
 
-def headers_search(data, imd):
+def headers_search_old(data, imd):
     """对 请求头 响应头"""
     for item in data:
         ii = {}
@@ -458,15 +458,110 @@ def rule_info(data_source, imp_pos):
     else:
         return {}
 
+def annotation_process(con: dict, datas: list) -> dict:
+    cls_groups = defaultdict(dict)
+    for key in con.keys():
+        cls_groups[key] = {}
+        for ann_data in datas:
+            http_data = ann_data["data"]
+            imps_data = ann_data["imps"]
+            log_index = ann_data["idx"]
+            info_pos_match(http_data, imps_data, log_index, cls_groups[key])
+    cls_groups = merge_accounts(cls_groups)
+    return cls_groups
 
+
+def data_search(data: str, imd: str, imp_pos: dict) -> dict:
+    if header_judge(data):
+        data = ujson.loads(data)
+        _, index_lst = headers_search(data, imd)
+    else:
+        index_lst = body_par_search(data, imd)
+    if index_lst:
+        imp_pos.setdefault(imd, index_lst)
+    return imp_pos
+
+
+def header_judge(info: str) -> bool:
+    return isinstance(info, str) and info.startswith("[{") and info.endswith("}]")
+
+
+def body_par_search(data: str, imd: str) -> list:
+    if imd in data:
+        start_index = data.find(imd)
+        return [start_index, start_index + len(imd)]
+    return []
+
+
+def headers_search(data: list, imd: str) -> tuple:
+    for item in data:
+        if "name" in item:
+            key = item["name"]
+            value = item["value"]
+            res = body_par_search(value, imd)
+            if res:
+                return {key: value}, res
+    return {}, []
+
+
+def info_pos_match(http_data: dict, imps_data: list, log_index: int, annotated_info: dict) -> dict:
+    for imp_index, imps in enumerate(imps_data):
+        imp_name = imps.get("imp_name")
+        imp_data = imps.get("imp_data")
+        imp_pos = imps.get("imp_pos")
+        imp_uid = imps.get("imp_uid")
+        imp_type = imps.get("imp_type")
+        if "JSON" not in imp_type:
+            ann_pos = http_data.get(imp_pos)
+            entry = annotated_info.setdefault(imp_name, {}).setdefault(log_index, {})
+
+            entry.setdefault("imp_uid", []).append(imp_uid)
+            entry.setdefault("ann_index", []).append(imp_index)
+            entry.setdefault(imp_pos, {}).setdefault(imp_data, ann_pos)
+            entry.setdefault("http_pos", []).append(imp_pos)
+            ht_dic = data_search(ann_pos, imp_data, {})
+            entry.setdefault("imp_pos", ht_dic)
+        else:
+            pass
+
+    return annotated_info
+
+def merge_accounts(cls_groups:dict) -> dict:
+    merged = {
+        'imp_uid': [],
+        'ann_index': [],
+
+        'imp_pos': {}
+    }
+    # 记录日志信息的数据
+    log_index=[]
+    for model_key,ch_data in cls_groups.items():
+        for ch_name,data in ch_data.items():
+            for idx,entry in data.items():
+                log_index.append(idx)
+                merged['imp_uid'].extend(entry['imp_uid'])
+                merged['ann_index'].extend(entry['ann_index'])
+                http_pos_lst = entry.get("http_pos")
+                for http_pos in http_pos_lst:
+                    merged.setdefault(http_pos, {})  # 确保该位置存在
+                    merged[http_pos].update(entry.get(http_pos))
+                for key, pos in entry['imp_pos'].items():
+                    merged['imp_pos'].setdefault(key, []).extend(pos)
+            for idx in log_index:
+                cls_groups[model_key][ch_name][idx] = merged
+    return cls_groups
 def handle_project(con, o_data):
     """
     :param o_data: 经过分类之后的数据信息。{key:{"账户":{0:{"request_body":""}}}
     :return:
     """
-    project_body, json_class_groups = analyze_handle(con, o_data)
+    # project_body, json_class_groups = analyze_handle(con, o_data)
+    project_body = annotation_process(con, o_data) # 使用新逻辑信处理 获取字符串规则信息
+    _, json_class_groups = classify_data1(con, o_data) # 获取json格式数据
     print(project_body)
     str_rules = {}
+    # 添加临时存储的规则数据
+    temp_rules = {}
     for model_key, pro_dic in project_body.items():  # project_body: key:{"账户":{0:{"request_body":""}}}
 
         # imp_name 为用户提供的标识信息，pos_data则是 每个数据索引内标识信息存在的位置及索引位置
@@ -475,13 +570,20 @@ def handle_project(con, o_data):
             for id, data in pos_data.items():  # id表示http数据的id索引，例如（0，1，2),data :
                 imp_pos = data["imp_pos"]  # 从data中获取详情信息
                 ann_index = data.get("ann_index", [])  # 获取标识信息的下标
-                a_index = ann_index[0]
+                a_index = ann_index
                 imp_uid = data.get("imp_uid")
                 # 需要对 data进行循环 这样才能动态的识别字段信息
-                str_rules = dynamic_data(data, str_rules, imp_pos, imp_name, a_index, model_key, imp_uid)
+                str_rules,temp_rules= dynamic_data(data, str_rules, imp_pos, imp_name, a_index, model_key, imp_uid,temp_rules)
                 print(str_rules)
     # print(json_class_groups)
-    json_rules = fodr_rules(json_class_groups)
+    json_rules = fodr_rules(json_class_groups) # json格式数据规则获取
+    temp_json_rules = copy.deepcopy(json_rules) # 深拷贝，用作界面识别的规则
+    json_rules = merge_rules(str_rules, json_rules) # 合并 json格式和字符串格式规则用作存储
+    temp_json_rules = merge_rules(temp_rules, temp_json_rules) # 合并 json格式和字符串格式规则用作界面识别
+    return json_rules,temp_json_rules
+
+def merge_rules(str_rules,json_rules):
+
     for model_key, model_value in str_rules.items():
         # 获取当前值信息
         j_rules = json_rules.get(model_key, {})
@@ -498,8 +600,7 @@ def handle_project(con, o_data):
         json_rules[model_key] = j_rules
     return json_rules
 
-
-def dynamic_data(http_data, rules, imp_pos, imp_name, a_index, model_key, imp_uid):
+def dynamic_data(http_data, rules, imp_pos, imp_name, a_index, model_key, imp_uid,temp_rules):
     """
     :param http_data: 请求数据 ，需要动态获取数据信息 并进行识别，判断走那个识别
     :return:
@@ -508,9 +609,12 @@ def dynamic_data(http_data, rules, imp_pos, imp_name, a_index, model_key, imp_ui
         if key != "ann_index" and key != "imp_pos" and key != "imp_uid":
             tol_info = rule_info(value, imp_pos)
             if tol_info:
-                rules.setdefault(model_key, {}).setdefault(imp_name, {}).setdefault(imp_uid[0] + f"_{str(a_index)}",
+                rules.setdefault(model_key, {}).setdefault(imp_name, {}).setdefault(imp_uid[0] + f"_{str(a_index[0])}",
                                                                                     {key: tol_info})
-    return rules
+                for a_idx,i_uid in zip(a_index,imp_uid):
+                    temp_rules.setdefault(model_key, {}).setdefault(imp_name, {}).setdefault(i_uid + f"_{str(a_idx)}",
+                                                                                    {key: tol_info})
+    return rules,temp_rules
 
 
 #                                                   ######保存规则信息######

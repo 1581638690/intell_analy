@@ -24,7 +24,7 @@ import zipfile
 import ujson
 
 sys.path.append("/opt/openfbi/pylibs")
-from intell_analy_new_front_end import *
+from intell_analy_new import *
 
 
 @route('/test')
@@ -115,14 +115,14 @@ def intell_analysis():
 
         # 获取相应规则，目前按照1条规则进行测试
         try:
-            intell_rule = handle_project(con, datas)  # 如果传入一条 则是返回一条，但是该条不能直接写入规则文件中，因为还需要判断识别是否为空
+            intell_rule,temp_json_rules = handle_project(con, datas)  # 如果传入一条 则是返回一条，但是该条不能直接写入规则文件中，因为还需要判断识别是否为空
             print(intell_rule)
             # print(con)
         except Exception as e:
             return {"status": "Error", "msg": f"规则提取失败:{e.__str__()}"}
         # 根据获取出的规则进行识别我们这三条信息，将数据传递给前端界面
         try:
-            idx_message = an_data(datas, intell_rule, con)
+            idx_message = an_data(datas, temp_json_rules, con)
         except Exception as e:
             # idx_message={}
             return {"status": "Error", "msg": f"数据识别失败:{e.__str__()}"}
