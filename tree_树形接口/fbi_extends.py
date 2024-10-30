@@ -4,12 +4,12 @@ import shutil
 import sys
 import configparser
 
-window_path_config = {
-"store_base_dir": "./models_paths/",
+window_file_path_config = {
+    "store_base_dir": "./models_paths/",
     "extract_base_dir": "./models_paths/model_extract/",
     "download_base_dir": "./model_xlinks/",
 }
-path_config = {
+file_path_config = {
     "store_base_dir": "/data/xlink/models_paths/",
     "extract_base_dir": "/data/xlink/models_paths/model_extract/",
     "download_base_dir": "/data/workspace/model_xlinks/",
@@ -169,7 +169,7 @@ def rules_save():
     # 拼接文件路径
     # base_dir = "/data/xlink/models_paths/"
     # base_dir = "./"
-    base_dir = path_config['store_base_dir']
+    base_dir = file_path_config['store_base_dir']
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
 
@@ -251,8 +251,8 @@ def upload_models():
     :return:
     """
     try:
-        extract_base_dir = path_config['extract_base_dir']  # 解压路径
-        base_dir = path_config['store_base_dir']  # 基础路径
+        extract_base_dir = file_path_config['extract_base_dir']  # 解压路径
+        base_dir = file_path_config['store_base_dir']  # 基础路径
         #  判断解压路径存不存在
         if not os.path.isdir(extract_base_dir):
             os.makedirs(extract_base_dir)
@@ -333,9 +333,9 @@ def models_download():
         if not file_str:
             return "未提供文件名"
 
-        base_dir = path_config['store_base_dir']
+        base_dir = file_path_config['store_base_dir']
 
-        download_base_dir = path_config['download_base_dir']
+        download_base_dir = file_path_config['download_base_dir']
 
         if not os.path.exists(base_dir):
             os.makedirs(base_dir)
