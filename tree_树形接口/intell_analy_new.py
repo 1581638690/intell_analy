@@ -472,14 +472,16 @@ def annotation_process(con: dict, datas: list) -> dict:
 
 
 def data_search(data: str, imd: str, imp_pos: dict) -> dict:
+    headers_data={}
     if header_judge(data):
         data = ujson.loads(data)
-        _, index_lst = headers_search(data, imd)
+        headers_data, index_lst = headers_search(data, imd)
     else:
         index_lst = body_par_search(data, imd)
     if index_lst:
         imp_pos.setdefault(imd, index_lst)
-    return imp_pos
+    
+    return imp_pos,headers_data
 
 
 def header_judge(info: str) -> bool:
@@ -500,13 +502,13 @@ def headers_search(data: list, imd: str) -> tuple:
             value = item["value"]
             res = body_par_search(value, imd)
             if res:
-                return {key: value}, res
+                return {key:value}, res
     return {}, []
 
 
 def info_pos_match(http_data: dict, imps_data: list, log_index: int, annotated_info: dict) -> dict:
     for imp_index, imps in enumerate(imps_data):
-        imp_name = imps.get("imp_name")
+        imp_name = imps.get("imp_name") 
         imp_data = imps.get("imp_data")
         imp_pos = imps.get("imp_pos")
         imp_uid = imps.get("imp_uid")
@@ -514,19 +516,21 @@ def info_pos_match(http_data: dict, imps_data: list, log_index: int, annotated_i
         if "JSON" not in imp_type:
             ann_pos = http_data.get(imp_pos)
             entry = annotated_info.setdefault(imp_name, {}).setdefault(log_index, {})
-
             entry.setdefault("imp_uid", []).append(imp_uid)
             entry.setdefault("ann_index", []).append(imp_index)
-            entry.setdefault(imp_pos, {}).setdefault(imp_data, ann_pos)
+            #entry.setdefault(imp_pos, {}).setdefault(imp_data, ann_pos)
             entry.setdefault("http_pos", []).append(imp_pos)
-            ht_dic = data_search(ann_pos, imp_data, {})
-            entry.setdefault("imp_pos", ht_dic)
+            ht_dic,headers_data = data_search(ann_pos, imp_data, {})
+            if headers_data:
+                entry.setdefault(imp_pos, {}).setdefault(imp_data, headers_data)
+            else:
+                entry.setdefault(imp_pos, {}).setdefault(imp_data, ann_pos)
+            entry.setdefault("imp_pos",ht_dic)
         else:
             pass
-
     return annotated_info
 
-def merge_accounts(cls_groups:dict) -> dict:
+def merge_accounts_old(cls_groups:dict) -> dict:
     merged = {
         'imp_uid': [],
         'ann_index': [],
@@ -549,6 +553,35 @@ def merge_accounts(cls_groups:dict) -> dict:
                     merged['imp_pos'].setdefault(key, []).extend(pos)
             for idx in log_index:
                 cls_groups[model_key][ch_name][idx] = merged
+    return cls_groups
+def merge_accounts(cls_groups: dict) -> dict:
+    for model_key, ch_data in cls_groups.items():
+        for ch_name, data in ch_data.items():
+            # 初始化合并结构
+            merged = {
+                'imp_uid': [],
+                'ann_index': [],
+                'imp_pos': {}
+            }
+            
+            # 合并数据
+            for idx, entry in data.items():
+                merged['imp_uid'].extend(entry['imp_uid'])
+                merged['ann_index'].extend(entry['ann_index'])
+                #merged['imp_pos'].extend(entry['imp_pos'])
+                # 合并 http_pos
+                http_pos_lst = entry.get("http_pos", [])
+                for http_pos in http_pos_lst:
+                    merged.setdefault(http_pos, {}).update(entry.get(http_pos, {}))
+                
+                # 合并 imp_pos
+                for key, pos in entry['imp_pos'].items():
+                    merged['imp_pos'].setdefault(key, []).extend(pos)
+
+            # 更新所有 idx 的数据为合并后的结果
+            for idx in data:
+                cls_groups[model_key][ch_name][idx] = merged
+    
     return cls_groups
 def handle_project(con, o_data):
     """
@@ -605,9 +638,9 @@ def dynamic_data(http_data, rules, imp_pos, imp_name, a_index, model_key, imp_ui
     :param http_data: 请求数据 ，需要动态获取数据信息 并进行识别，判断走那个识别
     :return:
     """
-    for key, value in http_data.items():
+    for key, data_source in http_data.items():
         if key != "ann_index" and key != "imp_pos" and key != "imp_uid":
-            tol_info = rule_info(value, imp_pos)
+            tol_info = rule_info(data_source, imp_pos)
             if tol_info:
                 rules.setdefault(model_key, {}).setdefault(imp_name, {}).setdefault(imp_uid[0] + f"_{str(a_index[0])}",
                                                                                     {key: tol_info})
