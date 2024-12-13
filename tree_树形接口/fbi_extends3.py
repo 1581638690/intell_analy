@@ -3,7 +3,7 @@
 import shutil
 import sys
 import configparser
-
+import uvicorn
 window_file_path_config = {
     "store_base_dir": "./models_paths/",
     "extract_base_dir": "./models_paths/model_extract/",
@@ -17,7 +17,10 @@ file_path_config = {
 
 sys.path.append("lib")
 
-from bottle import request, Bottle, abort, route, response, run
+#from bottle import request, Bottle, abort, route, response, run
+from fastapi import Request,FastAPI,Response
+from fastapi import  Query, Body, File, UploadFile, Form
+from fastapi import APIRouter
 import json
 import time
 import zipfile
@@ -26,21 +29,17 @@ import ujson
 sys.path.append("/opt/openfbi/pylibs")
 from intell_analy_new import *
 
+route = APIRouter()
 
-@route('/test')
-def get_test():
-    return "你好，测试成功!"
-
-
-@route("/cls_d", method="POST")
-def get_clssify():
+@route.post("/cls_d")
+async def get_clssify(data:dict,request:Request,response:Response):
     """
     获取前端传入的三条日志信息，返回分类上下文规则给前端
     :return:
     """
     # 接口后的参数信息 , body raw直接传入 数据 {“datas”:[{},{},{}]}
     try:
-        datas = request.json
+        datas = data
         o_data = datas.get("datas", {})
 
         result = clas_data(o_data)
@@ -84,13 +83,13 @@ def condition_judge(value, key, res, is_list=False):
     return res
 
 
-@route("/con_q", method="POST")  # 上下文规则传递
-def query_save():
+@route.post("/con_q")  # 上下文规则传递
+async def query_save(item:dict,request:Request,response:Response):
     """
     :return: 获取经过人工处理过的分类信息
     """
     try:
-        query_json = request.json
+        query_json = item
         query_name = query_json.get("query_name", "")  # 获取上下文规则名称
         condition = query_json.get("con", "")  #
         json_key = ujson.dumps(condition)
@@ -99,15 +98,15 @@ def query_save():
         return {"code":500,"status": "Error", "msg": str(e)}
 
 
-@route("/als_d", method="POST")
-def intell_analysis():
+@route.post("/als_d")
+async def intell_analysis(item:dict,request:Request,response:Response):
     """
     智能分析接口,进行提取分析数据
     :return:
     """
     try:
         output_res = {}
-        q_d = request.json  # 获取到前端发来的消息 其中包括上下文规则信息，标识的数据信息
+        q_d = item  # 获取到前端发来的消息 其中包括上下文规则信息，标识的数据信息
         datas = q_d["datas"]  # 获取标识信息
         con = q_d["con"]  # 获取上下文规则信息
         map_dic = q_d.get("map_dic", {})  # 获取字典映射规则信息
@@ -153,13 +152,12 @@ def intell_analysis():
     except Exception as e:
         return {"code":500,"status": "Error", "res": str(e)}
 
-
-@route("/s_rules_con", method="POST")
-def rules_save():
+@route.post("/s_rules_con")
+async def rules_save(item:dict,request:Request,response:Response):
     # 保存规则信息
     # 获取前端的规则数据，写入文件中
     try:
-        crlf_add_alter = request.json  # 获取add_alter 修改的和新增内容
+        crlf_add_alter = item # 获取add_alter 修改的和新增内容
         add_data = crlf_add_alter.get("add", {})
         alter_data = crlf_add_alter.get("alter", {})
         file_str = crlf_add_alter.get("file_str", "")
@@ -212,40 +210,26 @@ def rules_save():
             return {"code":500,"status": "Error", "msg": f"子模型修改错误:{e.__str__()}"}
     res = write_replace(source_file, destination_file, tol_rulers)
 
-    res.update({"add_msg": add_msg, "alter_msg": alter_msg})
+    res.update({"add_msg": add_msg, "alter_msg": alter_msg,"code":200})
 
     return res
 
 
-@route("/delete_rulers", method="POST")
-def delete_rules():
+@route.post("/delete_rulers")
+async def delete_rules(item:dict,request:Request,response:Response):
     # 删除子模型数据信息
-    crlf = request.json
+    crlf = item
     model_key = crlf.get("model_key", {})
     file_str = crlf.get("file_str", "")
     res = delete_rules_data(model_key, file_str)
     return res
 
 
-# 创建xlink，表信息，存储路径文件 一一对应
-@route("/xlink_table_path", method="POST")
-def xtp_create():
-    """
-    获取路径名称
-    :return: 创建好的xlink_ID,表名，路径名称
-
-    """
-    path_name = request.params.get("p_name")
-    try:
-        res = found_path(path_name)
-        return res
-    except Exception as e:
-        return {"code":500,"status": "Error", "msg": f"创建模型时出现错误:{e.__str__()}"}
-
 
 #             ##################add rzc 2024/4/28#####################
-@route("/model_upload", method="POST")
-def upload_models():
+@route.post("/model_upload")
+async def upload_models(item:dict,request:Request,response:Response,file_str:str = Query(None),
+                        upload_file:UploadFile = File(...)):
     """
     上传模型接口，要将模型文件，上传至当前环境下
     :return:
@@ -259,20 +243,23 @@ def upload_models():
         if not os.path.exists(base_dir):
             os.makedirs(base_dir)
         #  获取当前查询分析得模型名称
-        file_str = request.params.get("file_str", "")  # 传入的是 当前模型的文件名
+        #file_str = request.params.get("file_str", "")  # 传入的是 当前模型的文件名
         # 对参数进行解码
         decoded_file_str = file_str
         # 获取上传的文件
-        upload_file = request.files.get("file")
+        # upload_file = request.files.get("file")
         if not upload_file:
             return ujson.dumps({"code":500,"status": "Error", "msg": "未提供文件或文件名"}, ensure_ascii=False)
 
         # 获取文件压缩包原名称
-        filename = upload_file.raw_filename
+        filename = upload_file.filename
 
         # 拼接路径名称
         zip_filepath = os.path.join(extract_base_dir, filename)
-        upload_file.save(zip_filepath, overwrite=True)  # 保存 默认覆盖文件信息
+        with open(zip_filepath,"wb")as f:
+            content = await upload_file.read()
+            f.write(content)
+        #upload_file.save(zip_filepath, overwrite=True)  # 保存 默认覆盖文件信息
 
         # 解压缩文件
         try:
@@ -319,8 +306,8 @@ def upload_models():
         return f"错误：f{e.__str__()}"
 
 
-@route('/model_download', method='POST')
-def models_download():
+@route.post("/model_download")
+async def models_download(item:dict,request:Request,response:Response):
     """
     下载模型文件路由
     :param filename: 文件名
@@ -328,8 +315,8 @@ def models_download():
     """
     try:
         # 设置文件存储路径
-        file_str = request.json.get('filename', "")
-        current_data = request.json.get('current_data', [])
+        file_str = item.get('filename', "")
+        current_data = item.get('current_data', [])
         if not file_str:
             return "未提供文件名"
 
@@ -367,7 +354,7 @@ def models_download():
             os.remove(new_file_path)
         except Exception as e:
             return {"code":500,"status": "Error", "msg": f"移动文件出错：{e.__str__()}"}
-        response.content_type = 'application/zip'
+        #response.content_type = 'application/zip'
 
         return {"code":200,"status": "Success", "download_link": workspace_path}
 
@@ -376,4 +363,4 @@ def models_download():
 
 
 if __name__ == '__main__':
-    run(host='localhost', port=8080, debug=True)
+    uvicorn.run("fbi_extends3:route", host="0.0.0.0", port=9996)
