@@ -513,13 +513,16 @@ def info_pos_match(http_data: dict, imps_data: list, log_index: int, annotated_i
         imp_pos = imps.get("imp_pos")
         imp_uid = imps.get("imp_uid")
         imp_type = imps.get("imp_type")
+        imp_decode = imps.get("imp_decode")
         if "JSON" not in imp_type:
             ann_pos = http_data.get(imp_pos)
             entry = annotated_info.setdefault(imp_name, {}).setdefault(log_index, {})
-            entry.setdefault("imp_uid", []).append(imp_uid)
-            entry.setdefault("ann_index", []).append(imp_index)
+            entry.setdefault("imp_uid", []).append(imp_uid) # 保存标注文本的唯一ID
+            entry.setdefault("ann_index", []).append(imp_index) # 标注信息的索引
             #entry.setdefault(imp_pos, {}).setdefault(imp_data, ann_pos)
-            entry.setdefault("http_pos", []).append(imp_pos)
+            entry.setdefault("http_pos", []).append(imp_pos) # 获取标注信息的位置
+            entry.setdefault("imp_decode",[]).append(imp_decode) # 获取数据需要进行解码的数据
+            entry.setdefault("imp_type",[]).append(imp_type)#获取数据是否单多选
             ht_dic,headers_data = data_search(ann_pos, imp_data, {})
             if headers_data:
                 entry.setdefault(imp_pos, {}).setdefault(imp_data, headers_data)
@@ -561,6 +564,8 @@ def merge_accounts(cls_groups: dict) -> dict:
             merged = {
                 'imp_uid': [],
                 'ann_index': [],
+                'imp_decode':[],
+                "imp_type":[],
                 'imp_pos': {}
             }
             
@@ -568,6 +573,8 @@ def merge_accounts(cls_groups: dict) -> dict:
             for idx, entry in data.items():
                 merged['imp_uid'].extend(entry['imp_uid'])
                 merged['ann_index'].extend(entry['ann_index'])
+                merged['imp_decode'].extend(entry['imp_decode'])
+                merged['imp_type'].extend(entry['imp_type'])
                 #merged['imp_pos'].extend(entry['imp_pos'])
                 # 合并 http_pos
                 http_pos_lst = entry.get("http_pos", [])
@@ -605,8 +612,10 @@ def handle_project(con, o_data):
                 ann_index = data.get("ann_index", [])  # 获取标识信息的下标
                 a_index = ann_index
                 imp_uid = data.get("imp_uid")
+                imp_decode = data.get("imp_decode") # 获取编码信息
+                imp_type = data.get("imp_type") # 获取数据类型
                 # 需要对 data进行循环 这样才能动态的识别字段信息
-                str_rules,temp_rules= dynamic_data(data, str_rules, imp_pos, imp_name, a_index, model_key, imp_uid,temp_rules)
+                str_rules,temp_rules= dynamic_data(data, str_rules, imp_pos, imp_name, a_index, model_key, imp_uid,temp_rules,imp_decode,imp_type)
                 print(str_rules)
     # print(json_class_groups)
     json_rules = fodr_rules(json_class_groups) # json格式数据规则获取
@@ -633,17 +642,23 @@ def merge_rules(str_rules,json_rules):
         json_rules[model_key] = j_rules
     return json_rules
 
-def dynamic_data(http_data, rules, imp_pos, imp_name, a_index, model_key, imp_uid,temp_rules):
+def dynamic_data(http_data, rules, imp_pos, imp_name, a_index, model_key, imp_uid,temp_rules,imp_decode,imp_type):
     """
     :param http_data: 请求数据 ，需要动态获取数据信息 并进行识别，判断走那个识别
     :return:
     """
     for key, data_source in http_data.items():
-        if key != "ann_index" and key != "imp_pos" and key != "imp_uid":
+        if key != "ann_index" and key != "imp_pos" and key != "imp_uid" and key != "imp_decode" and key!= "imp_type":
             tol_info = rule_info(data_source, imp_pos)
             if tol_info:
-                rules.setdefault(model_key, {}).setdefault(imp_name, {}).setdefault(imp_uid[0] + f"_{str(a_index[0])}",
-                                                                                    {key: tol_info})
+                if "TEXT_mutil" in imp_type[0]:
+                    rules.setdefault(model_key, {}).setdefault(imp_name, {}).setdefault("多选" + imp_uid[0] + f"_{str(a_index[0])}",
+                                                                                    {key: tol_info,"imp_decode":imp_decode[0]})
+                else:
+                    rules.setdefault(model_key, {}).setdefault(imp_name, {}).setdefault(imp_uid[0] + f"_{str(a_index[0])}",
+                                                                                    {key: tol_info,"imp_decode":imp_decode[0]})# 添加编码规则信息
+                
+                
                 for a_idx,i_uid in zip(a_index,imp_uid):
                     temp_rules.setdefault(model_key, {}).setdefault(imp_name, {}).setdefault(i_uid + f"_{str(a_idx)}",
                                                                                     {key: tol_info})
@@ -651,7 +666,6 @@ def dynamic_data(http_data, rules, imp_pos, imp_name, a_index, model_key, imp_ui
 
 
 #                                                   ######保存规则信息######
-# 增加规则数据信息
 def save_all_data(rules, con, model_key, linfo, file_str):
     """
     保存规则、条件、标签信息到同一个文件中
@@ -715,7 +729,7 @@ def save_all_data(rules, con, model_key, linfo, file_str):
         res = dump_rules_pkl(existing_data, destination_file)
         return res
 
-
+#                                                   ######增加规则信息######
 def add_all_data(rules, con, model_key, linfo, map_field, MapField, dict_assoc, existing_data):
     """
     保存规则、条件、标签信息到同一个文件中
@@ -1035,8 +1049,33 @@ def s_e_str(start_str, end_str, data_source):
         start_pos = 0
         end_pos = len(data_source)
     return start_pos, end_pos
+#                                                ######识别文本多条数据######
+def s_e_str_more(start_str, end_str, data_source):
+    """
+    获取多个匹配项的起始和结束位置
+    :param start_str: 起始字符串
+    :param end_str: 结束字符串
+    :param data_source: 数据源
+    :return: 匹配项的开始和结束位置的列表
+    """
+    start_pos = 0
+    results = []
+    while True:
+        # 查找起始字符串
+        start_pos = data_source.find(start_str, start_pos)
+        if start_pos == -1:
+            break
+        start_pos += len(start_str)  # 向后移动到数据的实际开始位置
 
+        # 查找结束字符串
+        end_pos = data_source.find(end_str, start_pos)
+        if end_pos == -1:
+            break
 
+        results.append((start_pos, end_pos))
+        start_pos = end_pos  # 移动到下一个搜索位置
+
+    return results
 #                                                       ######配置信息代码######
 
 def x_uuids(x):
@@ -1139,24 +1178,26 @@ def rule_judge(rulers, o, data_storage, l_info, dict_tree=None, MapField=None, a
                 data_storage, l_info = model_data_extract(ch_name, o, data_storage, imp_data, l_info, dict_tree,
                                                           MapField, assoc_str)  # 组织名 o,
             else:
-                for http_pos, rle in imp_data.items():
+                imp_decode = imp_data.get("imp_decode")
+                imp_datas = {i:item for i,item in imp_data.items() if i!="imp_decode"}
+                for http_pos, rle in imp_datas.items():
                     current_data = o.get(http_pos, "")
                     if header_judge(current_data):
 
-                        data_storage, l_info = headers_models(current_data, rle, http_pos, ch_name, data_storage,
+                        data_storage, l_info = headers_models(current_data, rle, http_pos, ch_name, data_storage,imp_decode,uid,
                                                               l_info, dict_tree, MapField, assoc_str)
 
                     elif isinstance(current_data, list):
-                        data_storage, l_info = headers_models(current_data, rle, http_pos, ch_name, data_storage,
+                        data_storage, l_info = headers_models(current_data, rle, http_pos, ch_name, data_storage,imp_decode,uid,
                                                               l_info, dict_tree, MapField, assoc_str)
                     else:
-                        data_storage, l_info = body_models(current_data, rle, http_pos, ch_name, data_storage, l_info,
+                        data_storage, l_info = body_models(current_data, rle, http_pos, ch_name, data_storage, l_info,imp_decode,uid,
                                                            dict_tree, MapField, assoc_str)
 
     return data_storage, l_info
 
 
-def headers_models(current_data, pos_rules, http_pos, ch_name, data_storage, l_info, dict_tree=None, MapField=None,
+def headers_models(current_data, pos_rules, http_pos, ch_name, data_storage, l_info, imp_decode,uid,dict_tree=None, MapField=None,
                    assoc_str=""):
     try:
         current_data = ujson.loads(current_data)
@@ -1180,35 +1221,44 @@ def headers_models(current_data, pos_rules, http_pos, ch_name, data_storage, l_i
                 # 根据两者信息 从数据中提取出重要信息
                 values = item.get("value", "")
                 if values:  # 如果存在该值则进行查找
-                    start_pos, end_pos = s_e_str(start_str, end_str, values)
+                    # add rzc 2025/2/27
+                    if "多选" in uid:
+                        pos_list = s_e_str_more(start_str,end_str,values)
+                    else:
+                        # 单条识别
+                        pos_list = s_e_str(start_str, end_str, values)
+                    for i in pos_list:
+                        start_pos, end_pos = i
+                    # add end
+                    #start_pos, end_pos = s_e_str(start_str, end_str, values)
                     # 如果找到了起始字符串和结束字符串
-                    if start_pos != -1 and end_pos != -1:
-                        current_start = start_pos + start_offset
-                        current_end = end_pos - end_offset
-                        res = item["value"][current_start:current_end].strip()
-                        ch_name_lst = ch_name.split(">>")  # 取0索引，但是我还是要判断一下>>存不存在，如果不想存在，就直接返回当前字符串了
-                        if len(ch_name_lst) > 1:
-                            ch_name = ch_name_lst[1]
-                            type_name = ch_name_lst[0]
-                        else:
-                            type_name = ""
-                        if res == "":
-                            res = field_ch(MapField, ch_name, res)
-                        if res != "" and res not in data_storage.setdefault(http_pos, {}).setdefault(type_name,
-                                                                                                     {}).setdefault(
-                            ch_name, []):
-                            for end in end_chars:
-                                if end in res:
-                                    res = res[:res.index(end)]
-                            res = field_ch(MapField, ch_name, res)  # 中文字段映射
-                            res, l_info = dic_ass(ch_name, dict_tree, assoc_str, res, l_info)  # 字典映射
-                            data_storage[http_pos][type_name][ch_name].append(res)
+                        if start_pos != -1 and end_pos != -1:
+                            current_start = start_pos + start_offset
+                            current_end = end_pos - end_offset
+                            res = item["value"][current_start:current_end].strip()
+                            ch_name_lst = ch_name.split(">>")  # 取0索引，但是我还是要判断一下>>存不存在，如果不想存在，就直接返回当前字符串了
+                            if len(ch_name_lst) > 1:
+                                ch_names = ch_name_lst[1]
+                                type_name = ch_name_lst[0]
+                            else:
+                                type_name = ""
+                            if res == "":
+                                res = field_ch(MapField, ch_names, res)
+                            if res != "" and res not in data_storage.setdefault(http_pos, {}).setdefault(type_name,
+                                                                                                        {}).setdefault(
+                                ch_names, []):
+                                for end in end_chars:
+                                    if end in res:
+                                        res = res[:res.index(end)]
+                                res = field_ch(MapField, ch_names, res)  # 中文字段映射
+                                res, l_info = dic_ass(ch_names, dict_tree, assoc_str, res, l_info)  # 字典映射
+                                data_storage[http_pos][type_name][ch_names].append(res)
                 else:
                     continue
     return data_storage, l_info
 
 
-def body_models(data_source, pos_rules, http_pos, ch_name, data_storage, l_info, dict_tree=None, MapField=None,
+def body_models(data_source, pos_rules, http_pos, ch_name, data_storage, l_info,imp_decode,uid, dict_tree=None, MapField=None,
                 assoc_str=""):
     """
     处理体部
@@ -1226,30 +1276,39 @@ def body_models(data_source, pos_rules, http_pos, ch_name, data_storage, l_info,
     start_str = pos_rules["start"].get("str", "")
     end_str = pos_rules["end"].get("str", "")
     # 根据两者信息 从数据中提取出重要信息
-    start_pos, end_pos = s_e_str(start_str, end_str, data_source)
+    # 多条识别
+    if "多选" in uid:
+        pos_list = s_e_str_more(start_str,end_str,data_source)
+    else:
+        # 单条识别
+        pos_list = s_e_str(start_str, end_str, data_source)
+    for i in pos_list:
+        start_pos, end_pos = i
+        if start_pos != -1 and end_pos != -1:
+            current_start = start_pos + start_offset
+            current_end = end_pos - end_offset
+            res = data_source[current_start:current_end].strip()
+            # 进行编码转化操作
+            res = decode_value(imp_decode,res)
 
-    if start_pos != -1 and end_pos != -1:
-        current_start = start_pos + start_offset
-        current_end = end_pos - end_offset
-        res = data_source[current_start:current_end].strip()
-        # 根据空值会有搜索为空的信息，所以这里空值也进行存储
-        # 对 ch_name 进行分割
-        ch_name_lst = ch_name.split(">>")  # 取0索引，但是我还是要判断一下>>存不存在，如果不想存在，就直接返回当前字符串了
-        if len(ch_name_lst) > 1:
-            ch_name = ch_name_lst[1]
-            type_name = ch_name_lst[0]
-        else:
-            type_name = ""
-        if res == "":
-            res = field_ch(MapField, ch_name, res)
-        if res != "" and res not in data_storage.setdefault(http_pos, {}).setdefault(type_name, {}).setdefault(ch_name,
-                                                                                                               []):
-            for end in end_chars:
-                if end in res:
-                    res = res[:res.index(end)]
-            res = field_ch(MapField, ch_name, res)  # 中文字段映射
-            res, l_info = dic_ass(ch_name, dict_tree, assoc_str, res, l_info)  # 字典映射信息
-            data_storage[http_pos][type_name][ch_name].append(res)
+            # 根据空值会有搜索为空的信息，所以这里空值也进行存储
+            # 对 ch_name 进行分割
+            ch_name_lst = ch_name.split(">>")  # 取0索引，但是我还是要判断一下>>存不存在，如果不想存在，就直接返回当前字符串了
+            if len(ch_name_lst) > 1:
+                ch_names = ch_name_lst[1]
+                type_name = ch_name_lst[0]
+            else:
+                type_name = ""
+            if res == "":
+                res = field_ch(MapField, ch_names, res)
+            if res != "" and res not in data_storage.setdefault(http_pos, {}).setdefault(type_name, {}).setdefault(ch_names,
+                                                                                                                []):
+                for end in end_chars:
+                    if end in res:
+                        res = res[:res.index(end)]
+                res = field_ch(MapField, ch_names, res)  # 中文字段映射
+                res, l_info = dic_ass(ch_names, dict_tree, assoc_str, res, l_info)  # 字典映射信息
+                data_storage[http_pos][type_name][ch_names].append(res)
 
     return data_storage, l_info
 
@@ -1437,11 +1496,13 @@ def cification(key, data_soure, imps, rules):
         imp_type = imp["imp_type"]
         imp_uid = imp["imp_uid"]
         a_index = imp["annotated_index"]
+        imp_decode = imp["imp_decode"]
         target = preprocess_target(imp_data)
         # 进行递归查找，这个是做了全局的查找了
 
         paths_dict = find_values_in_dict_little(data_soure, target, imp_type)
-
+        # 添加编码识别规则信息
+        rules[key].setdefault(imp_name, {}).setdefault("JSON" + imp_uid + f"_{str(a_index)}", {}).setdefault("imp_decode",imp_decode)
         for target, paths in paths_dict.items():
 
             if paths:
@@ -1498,7 +1559,11 @@ def find_values_in_dict_little(data, target, imp_type, path='', found_paths=None
                 if imp_type != "JSON":
                     current_path = f"{path}-LIST"
                 elif imp_type == "JSON" and path:
-                    current_path = f"{path}-[0]"
+                    # 判断target是否是列表中最后一个
+                    if target == item and data[-1] == target:
+                        current_path = f"{path}-[-1]"
+                    else:
+                        current_path = f"{path}-[0]"
                 else:
                     current_path = f"{path}-[{index}]"
                 find_values_in_dict_little(item, target, imp_type, current_path, found_paths)
@@ -1807,13 +1872,20 @@ def model_data_extract(ch_name, o, data_storage, imp_data, l_info, dict_tree=Non
     :param data_storage:
     :return:
     """
-
-    for http_pos, rle_lst in imp_data.items():
+    # 读取规则信息 将编码规则提取出来
+    imp_decode = imp_data.get("imp_decode", "")
+    imp_datas = {i:item for i,item in imp_data.items() if i!="imp_decode"}
+    for http_pos, rle_lst in imp_datas.items():
+        # 添加编码规则识别
+       
         current_data = o.get(http_pos, "")
         if current_data:
             for t_rule in rle_lst:
                 value_lst = []
                 value_lst = get_value_by_path(current_data, t_rule, value_lst)
+                
+                #根据编码进行识别 add rzc 2025/2/27
+                value_lst = decode_value(imp_decode,value_lst)
                 # 对 ch_name 进行分割
                 ch_name_lst = ch_name.split(">>")  # 取0索引，但是我还是要判断一下>>存不存在，如果不想存在，就直接返回当前字符串了
                 if len(ch_name_lst) > 1:
@@ -1829,13 +1901,15 @@ def model_data_extract(ch_name, o, data_storage, imp_data, l_info, dict_tree=Non
 
     return data_storage, l_info
 
-
-# add rzc on 2024/7/17 针对子模型标签信息进行判断
-def label_judge(model_data, label_key, label_name):
+from typing import List,Dict,Union
+# add rzc on 2024/7/17 针对子模型标签信息进行判断 modify rzc on 2025/1/10 以获取多个日志类型的模型信息
+def label_judge(model_data:Dict, label_key:str, label_name_list:Union[List,str]) -> Dict:
     model_file_data = {}
+    if isinstance(label_name_list, str):
+        label_name_list = [label_name_list]
     for model_key, rule_data in model_data.items():
         label_info = rule_data.get("label_info", {})
-        if label_info.get(label_key) == label_name:
+        if label_info.get(label_key) in label_name_list:
             model_file_data[model_key] = rule_data
     return model_file_data
 
@@ -2262,7 +2336,7 @@ def session_retrieval(user_dic, account_model, acc_o):
     account = ""
     result = read_model_identify(account_model, acc_o)
     label_info = result.get("label_info", {})
-    if label_info.get("接口详情") == "登录":
+    if label_info.get("日志类型") == "账号登录":
         data = result.get("data", {})
         user_infos = {}
         token_container = []
@@ -2278,7 +2352,7 @@ def session_retrieval(user_dic, account_model, acc_o):
                             user_infos[name] = value[0]
                     else:
                         token_container = value
-        user_infos["date"] = datetime.datetime.now()
+        user_infos["date"] = r_datetime.datetime.now()
         if token_container:
             for jsessionid in token_container:
                 user_dic.setdefault(jsessionid, user_infos)
@@ -2303,7 +2377,7 @@ def session_retrieval(user_dic, account_model, acc_o):
 def sched_dele(user_dic):
     user_info = copy.deepcopy(user_dic)
     remove_key = []
-    new_date = datetime.datetime.now()
+    new_date = r_datetime.datetime.now()
     for key, value in user_info.items():
         if (new_date - value.get("date")).total_seconds() // 3600 >= 25:
             remove_key.append(key)
@@ -2323,6 +2397,219 @@ def filter_label(model_data, label_key, label_list):
             model_file_data[model_key] = rule_data
     return model_file_data
 
+########################### 接口合并操作行为 ###########################
+import datetime as r_datetime
+from datetime import timedelta
+from typing import Dict,Tuple,Any
+# 首先要获取合并类型的数量
+def more_count(model_data:Dict[str, Dict])->Dict[str, int]:
+    label = "多接口事件"
+    # 生成字典信息
+    merge_dic:Dict[str, int] = {}
+    for model_key,rule_data in model_data.items():
+        label_info = rule_data.get("label_info",{})
+        # 获取指定标签的类型信息
+        types = label_info.get(label, "")
+        
+        # 更新计数
+        if types:
+            merge_dic[types] = merge_dic.get(types, 0) + 1
+    return merge_dic
+
+def session_action_relation(sessionid:str, 
+                            action_dict: Dict[str,Any], 
+                            o: Dict[str,Any],
+                            label_info: Dict[str, Any],
+                            e_cot:Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+    """
+        sessionid:用户的唯一标识
+        action_dict:存储stream的行为链条
+        o:当前的流处理数据
+        e_cot:模型多接口事件的统计数据
+        
+    """
+    label = "多接口事件"
+    current_time = r_datetime.datetime.now()
+
+    # 清理超过24小时的sessionid
+    to_delete = []
+    for sid, value in action_dict.items():
+        if "timestamp" in value and current_time - value["timestamp"] > timedelta(hours=12):
+            to_delete.append(sid)
+
+    for sid in to_delete:
+        del action_dict[sid]
+
+    founds = False
+
+    update_action = False
+
+    # 判断多接口事件是否存在且存在于e_cot,如果存在获取到他的数量信息，然后根据入库统计数量信息，返回最终结果
+    if label in label_info and sessionid:
+        url = o.get("url")
+        if sessionid not in action_dict: # 判断sessionid不存在与行为链条字典中,表示行为动作第一次添加
+            action_dict[sessionid]={label:{"bhr_chain":[o],"timestamp":current_time}}
+
+            # founds = True
+        else:
+            # 当前sessionid存在于行为链条中，判断标签是否存在
+            if label not in action_dict[sessionid]:
+                action_dict[sessionid]={label:{"bhr_chain":[o],"timestamp":current_time}}
+            else:
+                # 存在于行为链条中,获取当前得label标签值
+                label_value = label_info.get(label)
+                # 获取标签模型统计数量
+                event_count = e_cot.get(label_value)
+                if  len(action_dict[sessionid][label]["bhr_chain"])<event_count:
+                    # 进行判断是否存在于链条中,只判断接口，参数，请求体 三者
+                    url = o.get("url")
+                    parameter =o.get("parameter")
+                    request_body = o.get("request_body")
+                    bhr_chain_set = {(item.get("url"), item.get("parameter"), item.get("request_body")) 
+                     for item in action_dict[sessionid][label]["bhr_chain"]}
+                    
+                    if (url,parameter,request_body) in bhr_chain_set: # 如果已经存在，就无需存入，直接返回founds,和行为链条
+                        founds= True
+                    else:
+                        # 将数据存入 并计算数量 如果达到数量则合并后的行为链条的信息
+                        action_dict[sessionid][label]["bhr_chain"].append(o)
+                        current_count = len(action_dict[sessionid][label]["bhr_chain"])
+                        if current_count == event_count: # 判断数量相同
+                            # 循环列表取出识别的值信息
+                            all_data= [item.get("all_data",{}) for item in action_dict[sessionid][label]["bhr_chain"]]
+                            merged_data = merge_data_dicts(all_data)
+                            o["all_data"] = ujson.dumps(merged_data,ensure_ascii=False)
+                            founds = True
+                            return action_dict,founds,o
+    else:
+        founds = True
+    return action_dict,founds,None
+
+def merge_data_dicts(data_dicts):
+    merged_data = {}
+    for data in data_dicts:
+        for http_pos, action_value in data.items():
+            if http_pos not in merged_data:
+                merged_data[http_pos] = {}
+            for action, value_lst in action_value.items():
+                if action not in merged_data[http_pos]:
+                    merged_data[http_pos][action] = {}
+                for name, value in value_lst.items():
+                    # 如果 `name` 已经存在，则处理合并逻辑
+                    if name in merged_data[http_pos][action]:
+                        # 假设要合并的是列表或数值，可以调整逻辑
+                        if isinstance(merged_data[http_pos][action][name], list):
+                            merged_data[http_pos][action][name] += value
+                        elif isinstance(merged_data[http_pos][action][name], (int, float)):
+                            merged_data[http_pos][action][name] += value
+                        else:
+                            merged_data[http_pos][action][name] = value
+                    else:
+                        merged_data[http_pos][action][name] = value
+    return merged_data
+import base64
+def decode_value(imp_decode:str,val_lst:Union[str,List[str]])->Union[str,List[str]]:
+    """
+    :param imp_decode: 解码规则
+    :param val_lst: 解码数据
+    :return:
+    """
+    # 如果解码规则为空，直接返回原数据
+    if not imp_decode:
+        return val_lst
+    else:
+        if imp_decode == "unicode":
+            if  isinstance(val_lst, list):
+                return [v.encode("utf-8").decode("unicode_escape") for v in val_lst]
+            elif isinstance(val_lst, str):
+                return val_lst.encode("utf-8").decode("unicode_escape")
+        elif imp_decode == "base64":
+
+            if  isinstance(val_lst, list):
+                return [base64.b64decode(v).decode("utf-8") for v in val_lst]
+            elif isinstance(val_lst, str):
+                return base64.b64decode(val_lst).decode("utf-8")
+
 
 if __name__ == '__main__':
-    pass
+    # company_list = [
+    #     {'url': 'searchForHitList', '多接口事件': '详情', 'sessionid': 'c7318a9eaa425684db4052edca008c1b',"parameter":"page=1&pagesize=2","all_data":{"response_body":{"操作":{"会话ID":["abcfghd0000"]}}}},
+    #     {"url": "selectListForPg", "多接口事件": "详情", "sessionid": "c7318a9eaa425684db4052edca008c1b",
+    #      "request_body": '{"tableName":"gj_qxb_qyjbxxb","codition":{"eid":""},"page":2,"limit":10}',
+    #      "response_body": '{"code":"请求成功！","这是第二个"}',"all_data":{"response_body":{"操作":{"会话ID2":["abcfghd000012121"]}}}},
+    #      {"url": "selectListForPg", "多接口事件": "详情", "sessionid": "c7318a9eaa425684db4052edca008c1b",
+    #      "request_body": '{"tableName":"gj_qxb_qyrizhixinxi","codition":{"eid":""},"page":2,"limit":10}',
+    #      "response_body": '{"code":"请求成功！","这是第二个"}',"all_data":{"response_body":{"操作":{"会话ID3":["abcfghd0000131313"]}}}},
+    # ]
+    # action_dict = {}
+    
+    # e_cot = {"详情":3}
+    
+    # for o in company_list:
+    #     sessionid = o.get("sessionid")
+    #     label_info = {"多接口事件":"详情"}
+    #     action_dict , founds,event_dic= session_action_relation(sessionid,action_dict,o,label_info,e_cot)
+    #     print(event_dic)
+    models = {"":{ "rules": {
+            "操作>>问答": {
+                "JSONid-m7lksmwx-uecgc3sj0_0": {
+                    "imp_decode": "",
+                    "request_body": [
+                        "messages-[-1]"
+                    ]
+                }
+            },
+            "返回结果>>回答": {
+                "多选id-m7lkt416-mol77zpdo_1": {
+                    "response_body": {
+                        "start": {
+                            "str": "\"delta\":{\"content\":\""
+                        },
+                        "end": {
+                            "str": "\"}}],\"created\":17405"
+                        }
+                    },
+                    "imp_decode": ""
+                }
+            }
+        }, 'label_info': {'app_name': '大数据智能开发平台', '日志类型': '操作事件'}, 'map_dic': {}, 'MapField': {}, 'dict_assoc': ''}}
+    #model  = {'操作>>问答': {'JSONid-m7lksmwx-uecgc3sj0_0': {'imp_decode': '', 'request_body': ['messages-[-1]']}}, '返回结果>>回答': {'id-m7lkt416-mol77zpdo_1': {'response_body': {'start': {'str': '"delta":{"content":"'}, 'end': {'str': '"}}],"created":17405'}}, 'imp_decode': 'unicode'}}}
+    o = {
+        "time": "2025-02-26T15:09:22",
+        "app": "192.168.124.78:8082",
+        "app_name": "",
+        "flow_id": "1946727181621027",
+        "urld": "http://192.168.124.78:8082/v1/chat/completions",
+        "name": "",
+        "account": "",
+        "url": "http://192.168.124.78:8082/v1/chat/completions",
+        "auth_type": 0,
+        "cls": "[]",
+        "levels": "",
+        "srcip": "192.168.125.2",
+        "real_ip": "",
+        "dstip": "192.168.124.78",
+        "dstport": 8082,
+        "http_method": "POST",
+        "status": 200,
+        "api_type": "0",
+        "risk_level": "0",
+        "qlength": 519,
+        "yw_count": 0,
+        "length": "0",
+        "age": 4166,
+        "srcport": 50758,
+        "parameter": "",
+        "content_length": 3856,
+        "id": "1740553663212358847",
+        "content_type": "未知",
+        "key": "\"\"",
+        "info": "{}",
+        "request_headers": "[{\"name\":\"Host\",\"value\":\"192.168.124.78:8082\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Content-Length\",\"value\":\"519\"},{\"name\":\"User-Agent\",\"value\":\"Mozilla\\/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit\\/537.36 (KHTML, like Gecko) Chrome\\/133.0.0.0 Safari\\/537.36 Edg\\/133.0.0.0\"},{\"name\":\"Content-Type\",\"value\":\"application\\/json\"},{\"name\":\"Accept\",\"value\":\"*\\/*\"},{\"name\":\"Origin\",\"value\":\"http:\\/\\/192.168.124.78:8082\"},{\"name\":\"Referer\",\"value\":\"http:\\/\\/192.168.124.78:8082\\/\"},{\"name\":\"Accept-Encoding\",\"value\":\"gzip, deflate\"},{\"name\":\"Accept-Language\",\"value\":\"zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6\"}]",
+        "response_headers": "[{\"name\":\"Keep-Alive\",\"value\":\"timeout=5, max=100\"},{\"name\":\"Content-Type\",\"value\":\"text\\/event-stream\"},{\"name\":\"Server\",\"value\":\"llama.cpp\"},{\"name\":\"Transfer-Encoding\",\"value\":\"chunked\"},{\"name\":\"Access-Control-Allow-Origin\",\"value\":\"http:\\/\\/192.168.124.78:8082\"}]",
+        "request_body": "{\"messages\":[{\"role\":\"system\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"你好\"}],\"stream\":true,\"cache_prompt\":true,\"samplers\":\"edkypmxt\",\"temperature\":0.8,\"dynatemp_range\":0,\"dynatemp_exponent\":1,\"top_k\":40,\"top_p\":0.95,\"min_p\":0.05,\"typical_p\":1,\"xtc_probability\":0,\"xtc_threshold\":0.1,\"repeat_last_n\":64,\"repeat_penalty\":1,\"presence_penalty\":0,\"frequency_penalty\":0,\"dry_multiplier\":0,\"dry_base\":1.75,\"dry_allowed_length\":2,\"dry_penalty_last_n\":-1,\"max_tokens\":-1,\"timings_per_token\":false}",
+        "response_body": "data: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"<think>\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"\\n\\n\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"</think>\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"\\n\\n\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"你好\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"！\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"有什么\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"我可以\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"帮\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"你的\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"吗\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"？\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"delta\":{}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":13,\"prompt_tokens\":10,\"total_tokens\":23},\"timings\":{\"prompt_n\":2,\"prompt_ms\":22.426,\"prompt_per_token_ms\":11.213,\"prompt_per_second\":89.18219923303309,\"predicted_n\":13,\"predicted_ms\":164.818,\"predicted_per_token_ms\":12.678307692307694,\"predicted_per_second\":78.87488017085512}}\n\ndata: [DONE]\n\n"
+    }
+    
+    res = read_model_identify(models,o)
+    print(res)
