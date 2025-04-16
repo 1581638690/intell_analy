@@ -1,4 +1,5 @@
 import os
+import ast
 import copy
 import time
 import ujson
@@ -297,7 +298,7 @@ def start_end_df_handle(data_source, imp_pos):
     # 更新 end_df - 从结束位置向后提取最多20个字符
     for idx, row in end_df.iterrows():
         # char_limit = row["char_limit"]
-        char_limit = 20
+        char_limit = 15
         _, end_index = imp_pos[idx]
         # 需要确定实际可用的字符数据量
         available_chars = len(row["data"]) - end_index  # 如果大于20 就取20，如果 两个相等 就是0 ，如果小于20就取char_limit
@@ -435,6 +436,10 @@ def rule_info(data_source, imp_pos):
     """
     if all(isinstance(value, str) for value in data_source.values()):
         continuous_start_df, continuous_end_df, result_df, end_df = start_end_df_handle(data_source, imp_pos)
+        print(continuous_start_df)
+        print(continuous_end_df)
+        print(result_df)
+        print(end_df)
         tol_info = continuous_df(result_df, end_df, continuous_start_df, continuous_end_df)
         # result["default"] = tol_info
 
@@ -471,10 +476,12 @@ def annotation_process(con: dict, datas: list) -> dict:
     return cls_groups
 
 
-def data_search(data: str, imd: str, imp_pos: dict) -> dict:
+def data_search(data: str, imd: str, imp_pos: dict,imp_decode:str) -> dict:
     headers_data={}
     if header_judge(data):
         data = ujson.loads(data)
+        if imp_decode == "bytes":
+            imd = ast.literal_eval(f'"{imd}"')
         headers_data, index_lst = headers_search(data, imd)
     else:
         index_lst = body_par_search(data, imd)
@@ -513,7 +520,7 @@ def info_pos_match(http_data: dict, imps_data: list, log_index: int, annotated_i
         imp_pos = imps.get("imp_pos")
         imp_uid = imps.get("imp_uid")
         imp_type = imps.get("imp_type")
-        imp_decode = imps.get("imp_decode")
+        imp_decode = imps.get("imp_decode","")
         if "JSON" not in imp_type:
             ann_pos = http_data.get(imp_pos)
             entry = annotated_info.setdefault(imp_name, {}).setdefault(log_index, {})
@@ -523,7 +530,7 @@ def info_pos_match(http_data: dict, imps_data: list, log_index: int, annotated_i
             entry.setdefault("http_pos", []).append(imp_pos) # 获取标注信息的位置
             entry.setdefault("imp_decode",[]).append(imp_decode) # 获取数据需要进行解码的数据
             entry.setdefault("imp_type",[]).append(imp_type)#获取数据是否单多选
-            ht_dic,headers_data = data_search(ann_pos, imp_data, {})
+            ht_dic,headers_data = data_search(ann_pos, imp_data, {},imp_decode)
             if headers_data:
                 entry.setdefault(imp_pos, {}).setdefault(imp_data, headers_data)
             else:
@@ -573,7 +580,7 @@ def merge_accounts(cls_groups: dict) -> dict:
             for idx, entry in data.items():
                 merged['imp_uid'].extend(entry['imp_uid'])
                 merged['ann_index'].extend(entry['ann_index'])
-                merged['imp_decode'].extend(entry['imp_decode'])
+                merged['imp_decode'].extend(entry.get("imp_decode",""))
                 merged['imp_type'].extend(entry['imp_type'])
                 #merged['imp_pos'].extend(entry['imp_pos'])
                 # 合并 http_pos
@@ -612,7 +619,7 @@ def handle_project(con, o_data):
                 ann_index = data.get("ann_index", [])  # 获取标识信息的下标
                 a_index = ann_index
                 imp_uid = data.get("imp_uid")
-                imp_decode = data.get("imp_decode") # 获取编码信息
+                imp_decode = data.get("imp_decode","") # 获取编码信息
                 imp_type = data.get("imp_type") # 获取数据类型
                 # 需要对 data进行循环 这样才能动态的识别字段信息
                 str_rules,temp_rules= dynamic_data(data, str_rules, imp_pos, imp_name, a_index, model_key, imp_uid,temp_rules,imp_decode,imp_type)
@@ -649,6 +656,13 @@ def dynamic_data(http_data, rules, imp_pos, imp_name, a_index, model_key, imp_ui
     """
     for key, data_source in http_data.items():
         if key != "ann_index" and key != "imp_pos" and key != "imp_uid" and key != "imp_decode" and key!= "imp_type":
+            if imp_decode == ["bytes"]:
+                # 进行解码处理
+                data_source_temp = {}
+                for b_data,value  in data_source.items():
+                    b_data = ast.literal_eval(f'"{b_data}"')
+                    data_source_temp[b_data] = value
+                data_source = data_source_temp
             tol_info = rule_info(data_source, imp_pos)
             if tol_info:
                 if "TEXT_mutil" in imp_type[0]:
@@ -1184,12 +1198,12 @@ def rule_judge(rulers, o, data_storage, l_info, dict_tree=None, MapField=None, a
                     current_data = o.get(http_pos, "")
                     if header_judge(current_data):
 
-                        data_storage, l_info = headers_models(current_data, rle, http_pos, ch_name, data_storage,imp_decode,uid,
-                                                              l_info, dict_tree, MapField, assoc_str)
+                        data_storage, l_info = headers_models(current_data, rle, http_pos, ch_name, data_storage,
+                                                              l_info,imp_decode,uid, dict_tree, MapField, assoc_str)
 
                     elif isinstance(current_data, list):
-                        data_storage, l_info = headers_models(current_data, rle, http_pos, ch_name, data_storage,imp_decode,uid,
-                                                              l_info, dict_tree, MapField, assoc_str)
+                        data_storage, l_info = headers_models(current_data, rle, http_pos, ch_name, data_storage,
+                                                              l_info,imp_decode,uid, dict_tree, MapField, assoc_str)
                     else:
                         data_storage, l_info = body_models(current_data, rle, http_pos, ch_name, data_storage, l_info,imp_decode,uid,
                                                            dict_tree, MapField, assoc_str)
@@ -1227,6 +1241,8 @@ def headers_models(current_data, pos_rules, http_pos, ch_name, data_storage, l_i
                     else:
                         # 单条识别
                         pos_list = s_e_str(start_str, end_str, values)
+                    if isinstance(pos_list, tuple):
+                        pos_list = [pos_list]
                     for i in pos_list:
                         start_pos, end_pos = i
                     # add end
@@ -1236,6 +1252,7 @@ def headers_models(current_data, pos_rules, http_pos, ch_name, data_storage, l_i
                             current_start = start_pos + start_offset
                             current_end = end_pos - end_offset
                             res = item["value"][current_start:current_end].strip()
+                            res = decode_value(imp_decode,res)  # 进行编码转化操作
                             ch_name_lst = ch_name.split(">>")  # 取0索引，但是我还是要判断一下>>存不存在，如果不想存在，就直接返回当前字符串了
                             if len(ch_name_lst) > 1:
                                 ch_names = ch_name_lst[1]
@@ -1282,6 +1299,8 @@ def body_models(data_source, pos_rules, http_pos, ch_name, data_storage, l_info,
     else:
         # 单条识别
         pos_list = s_e_str(start_str, end_str, data_source)
+    if isinstance(pos_list, tuple):
+        pos_list = [pos_list]
     for i in pos_list:
         start_pos, end_pos = i
         if start_pos != -1 and end_pos != -1:
@@ -2529,6 +2548,31 @@ def decode_value(imp_decode:str,val_lst:Union[str,List[str]])->Union[str,List[st
                 return [base64.b64decode(v).decode("utf-8") for v in val_lst]
             elif isinstance(val_lst, str):
                 return base64.b64decode(val_lst).decode("utf-8")
+        elif imp_decode == "bytes":
+            lists= []
+            if  isinstance(val_lst, list):
+                # 第一次解析，把多层转义还原成 "b'\xe9\x92\x89\xe9\x92\x89'"
+                for v in val_lst:
+                    layer1 = ast.literal_eval(v)
+
+                    # 第二次解析，把字符串变成真正的 bytes 对象
+                    layer2 = ast.literal_eval(layer1)
+
+                    # 然后 decode 成 utf-8 字符串
+                    decoded_str = layer2.decode('utf-8')
+                    lists.append(decoded_str)
+                return lists
+
+            elif isinstance(val_lst, str):
+                layer1 = ast.literal_eval(val_lst)
+
+                # 第二次解析，把字符串变成真正的 bytes 对象
+                layer2 = ast.literal_eval(layer1)
+
+                # 然后 decode 成 utf-8 字符串
+                decoded_str = layer2.decode('utf-8')
+                return decoded_str
+
 
 
 if __name__ == '__main__':
@@ -2574,42 +2618,90 @@ if __name__ == '__main__':
             }
         }, 'label_info': {'app_name': '大数据智能开发平台', '日志类型': '操作事件'}, 'map_dic': {}, 'MapField': {}, 'dict_assoc': ''}}
     #model  = {'操作>>问答': {'JSONid-m7lksmwx-uecgc3sj0_0': {'imp_decode': '', 'request_body': ['messages-[-1]']}}, '返回结果>>回答': {'id-m7lkt416-mol77zpdo_1': {'response_body': {'start': {'str': '"delta":{"content":"'}, 'end': {'str': '"}}],"created":17405'}}, 'imp_decode': 'unicode'}}}
+    models_acc = {"":
+    {'rules': {
+        '返回结果>>会话ID': {
+            'id-m7twfh05-jej7iy5sg_0': {
+                'response_headers': {
+                    'Set-Cookie': {
+                        'start': {
+                            'str': 'fbi_session='
+                        },
+                        'end': {
+                            'str': ';'
+                        }
+                    }
+                },
+                'imp_decode': ''
+            }
+        },
+        '操作>>账户名': {
+            'id-m7twfrs5-0vq0gg0yk_1': {
+                'request_body': {
+                    'start': {
+                        'str': 'data={\"name\":\"'
+                    },
+                    'end': {
+                        'str': '\",\"token\":0,\"au'
+                    }
+                },
+                'imp_decode': ''
+            }
+        }
+    },
+    'condition': {
+        'url': {
+            'judge': '=',
+            'msg': 'http://192.168.124.247:9999/auth'
+        }
+    },
+    'label_info': {
+        '日志类型': '账号登录'
+    },
+    'map_dic': {},
+    'MapField': {},
+    'dict_assoc': ''
+}}
+
     o = {
-        "time": "2025-02-26T15:09:22",
-        "app": "192.168.124.78:8082",
-        "app_name": "",
-        "flow_id": "1946727181621027",
-        "urld": "http://192.168.124.78:8082/v1/chat/completions",
-        "name": "",
-        "account": "",
-        "url": "http://192.168.124.78:8082/v1/chat/completions",
-        "auth_type": 0,
-        "cls": "[]",
-        "levels": "",
-        "srcip": "192.168.125.2",
-        "real_ip": "",
-        "dstip": "192.168.124.78",
-        "dstport": 8082,
-        "http_method": "POST",
-        "status": 200,
-        "api_type": "0",
-        "risk_level": "0",
-        "qlength": 519,
-        "yw_count": 0,
-        "length": "0",
-        "age": 4166,
-        "srcport": 50758,
-        "parameter": "",
-        "content_length": 3856,
-        "id": "1740553663212358847",
-        "content_type": "未知",
-        "key": "\"\"",
-        "info": "{}",
-        "request_headers": "[{\"name\":\"Host\",\"value\":\"192.168.124.78:8082\"},{\"name\":\"Connection\",\"value\":\"keep-alive\"},{\"name\":\"Content-Length\",\"value\":\"519\"},{\"name\":\"User-Agent\",\"value\":\"Mozilla\\/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit\\/537.36 (KHTML, like Gecko) Chrome\\/133.0.0.0 Safari\\/537.36 Edg\\/133.0.0.0\"},{\"name\":\"Content-Type\",\"value\":\"application\\/json\"},{\"name\":\"Accept\",\"value\":\"*\\/*\"},{\"name\":\"Origin\",\"value\":\"http:\\/\\/192.168.124.78:8082\"},{\"name\":\"Referer\",\"value\":\"http:\\/\\/192.168.124.78:8082\\/\"},{\"name\":\"Accept-Encoding\",\"value\":\"gzip, deflate\"},{\"name\":\"Accept-Language\",\"value\":\"zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6\"}]",
-        "response_headers": "[{\"name\":\"Keep-Alive\",\"value\":\"timeout=5, max=100\"},{\"name\":\"Content-Type\",\"value\":\"text\\/event-stream\"},{\"name\":\"Server\",\"value\":\"llama.cpp\"},{\"name\":\"Transfer-Encoding\",\"value\":\"chunked\"},{\"name\":\"Access-Control-Allow-Origin\",\"value\":\"http:\\/\\/192.168.124.78:8082\"}]",
-        "request_body": "{\"messages\":[{\"role\":\"system\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"你好\"}],\"stream\":true,\"cache_prompt\":true,\"samplers\":\"edkypmxt\",\"temperature\":0.8,\"dynatemp_range\":0,\"dynatemp_exponent\":1,\"top_k\":40,\"top_p\":0.95,\"min_p\":0.05,\"typical_p\":1,\"xtc_probability\":0,\"xtc_threshold\":0.1,\"repeat_last_n\":64,\"repeat_penalty\":1,\"presence_penalty\":0,\"frequency_penalty\":0,\"dry_multiplier\":0,\"dry_base\":1.75,\"dry_allowed_length\":2,\"dry_penalty_last_n\":-1,\"max_tokens\":-1,\"timings_per_token\":false}",
-        "response_body": "data: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"<think>\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"\\n\\n\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"</think>\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"\\n\\n\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"你好\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"！\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"有什么\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"我可以\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"帮\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"你的\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"吗\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"？\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":0,\"index\":0,\"delta\":{\"content\":\"\"}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"delta\":{}}],\"created\":1740553762,\"id\":\"chatcmpl-tHNHK6oZSSkHuTxxxCpxdvv2IMKhEfeS\",\"model\":\"gpt-3.5-turbo\",\"system_fingerprint\":\"b4558-2cc9b8c3\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":13,\"prompt_tokens\":10,\"total_tokens\":23},\"timings\":{\"prompt_n\":2,\"prompt_ms\":22.426,\"prompt_per_token_ms\":11.213,\"prompt_per_second\":89.18219923303309,\"predicted_n\":13,\"predicted_ms\":164.818,\"predicted_per_token_ms\":12.678307692307694,\"predicted_per_second\":78.87488017085512}}\n\ndata: [DONE]\n\n"
-    }
+                "time": "2025-03-04T09:57:38",
+                "app": "192.168.124.247:9999",
+                "app_name": "大数据智能开发平台",
+                "flow_id": "2011742784883333",
+                "urld": "http://192.168.124.247:9999/auth",
+                "name": "用户登录",
+                "account": "",
+                "url": "http://192.168.124.247:9999/auth",
+                "auth_type": 5,
+                "cls": "[]",
+                "levels": "",
+                "srcip": "192.168.125.2",
+                "real_ip": "192.168.125.2",
+                "dstip": "192.168.124.247",
+                "dstport": 9999,
+                "http_method": "POST",
+                "status": 200,
+                "api_type": "0",
+                "risk_level": "0",
+                "qlength": 99,
+                "yw_count": 0,
+                "length": "68",
+                "age": 4392,
+                "srcport": 44854,
+                "parameter": "",
+                "content_length": 68,
+                "id": "1741053458710549554",
+                "content_type": "HTML",
+                "key": "\"\"",
+                "info": "{}",
+                "request_headers": "[{\"name\":\"Host\",\"value\":\"192.168.124.247\"},{\"name\":\"X-Real-IP\",\"value\":\"192.168.125.2\"},{\"name\":\"X-Forwarded-For\",\"value\":\"192.168.125.2\"},{\"name\":\"X-Forwarded-Host\",\"value\":\"localhost\"},{\"name\":\"Connection\",\"value\":\"close\"},{\"name\":\"Content-Length\",\"value\":\"99\"},{\"name\":\"sec-ch-ua\",\"value\":\"\\\"Microsoft Edge\\\";v=\\\"117\\\", \\\"Not;A=Brand\\\";v=\\\"8\\\", \\\"Chromium\\\";v=\\\"117\\\"\"},{\"name\":\"Accept\",\"value\":\"*\\/*\"},{\"name\":\"Content-Type\",\"value\":\"application\\/x-www-form-urlencoded; charset=UTF-8\"},{\"name\":\"X-Requested-With\",\"value\":\"XMLHttpRequest\"},{\"name\":\"sec-ch-ua-mobile\",\"value\":\"?0\"},{\"name\":\"User-Agent\",\"value\":\"Mozilla\\/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit\\/537.36 (KHTML, like Gecko) Chrome\\/117.0.0.0 Safari\\/537.36 Edg\\/117.0.2045.31\"},{\"name\":\"sec-ch-ua-platform\",\"value\":\"\\\"Windows\\\"\"},{\"name\":\"Origin\",\"value\":\"https:\\/\\/192.168.124.247:4434\"},{\"name\":\"Sec-Fetch-Site\",\"value\":\"same-origin\"},{\"name\":\"Sec-Fetch-Mode\",\"value\":\"cors\"},{\"name\":\"Sec-Fetch-Dest\",\"value\":\"empty\"},{\"name\":\"Referer\",\"value\":\"https:\\/\\/192.168.124.247:4434\\/fbi\\/login.h5\"},{\"name\":\"Accept-Encoding\",\"value\":\"gzip, deflate, br\"},{\"name\":\"Accept-Language\",\"value\":\"zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6\"},{\"name\":\"Cookie\",\"value\":\"eng=9002; work_space=public; userName=superFBI\"}]",
+                "response_headers": "[{\"name\":\"Server\",\"value\":\"gunicorn\"},{\"name\":\"Date\",\"value\":\"Tue, 04 Mar 2025 01:57:38 GMT\"},{\"name\":\"Connection\",\"value\":\"close\"},{\"name\":\"Content-Length\",\"value\":\"68\"},{\"name\":\"Content-Type\",\"value\":\"text\\/html; charset=UTF-8\"},{\"name\":\"Set-Cookie\",\"value\":\"fbi_session=f376adbfb64f9ea8df8f44c7ebfab993; HttpOnly; Max-Age=3600; Path=\\/; SameSite=None; Secure, eng=9001; Max-Age=3600; Path=\\/; SameSite=None; Secure, work_space=public; Max-Age=3600; Path=\\/; SameSite=None; Secure\"}]",
+                "request_body": "data={\"name\":\"superFBI\",\"token\":0,\"auth_key\":\"RmJpQDMwNTA=\"}",
+                "response_body": ""
+            }
     
-    res = read_model_identify(models,o)
+    res = read_model_identify(models_acc,o)
     print(res)
+
+
+    #parameter = "page=0&size=10&queryCondition={"rules":[{"field":"noticeTitle","op":"like","value":"关于"},{"field":"publishOrmName","op":"like","value":"李"}],"groups":[],"op":"and"}&sort=updatedTime,desc"
